@@ -1459,3 +1459,335 @@ class FlowDiagram:
         
         # Save and render the graph
         dot.render(self.output_path, view=self.display, format='pdf')
+
+
+from typing import Optional, Union, List, Dict, Any, Tuple, Callable
+import pandas as pd
+import numpy as np
+import os
+import inspect
+import re
+
+class EasyFlow:
+    """
+    A simplified interface for creating equity-focused cohort flow diagrams,
+    building on top of the EquiFlow package with a more user-friendly API.
+    """
+    
+    def __init__(
+        self, 
+        data: pd.DataFrame, 
+        title: str = "Cohort Selection",
+        auto_detect: bool = True
+    ):
+        """
+        Initialize EasyFlow with a DataFrame and optional title.
+        
+        Parameters:
+        -----------
+        data : pd.DataFrame
+            The initial cohort dataframe
+        title : str, optional
+            Title for the flow diagram
+        auto_detect : bool, optional
+            Whether to automatically detect variable types
+        """
+        self.data = data
+        self.title = title
+        self.auto_detect = auto_detect
+        
+        # Initialize empty lists for variable types
+        self._categorical_vars = []
+        self._normal_vars = []
+        self._nonnormal_vars = []
+        
+        # Track exclusion steps
+        self._exclusion_steps = []
+        self._current_data = data
+        
+        # Store outputs
+        self.flow_table = None
+        self.characteristics = None
+        self.drifts = None
+        self.diagram = None
+        
+        # Stored EquiFlow instance
+        self._equiflow = None
+        
+        # Auto-detect variable types if enabled
+        if auto_detect:
+            self._detect_variable_types()
+    
+    def _detect_variable_types(self):
+        """
+        Automatically detect variable types in the dataframe.
+        - Categorical: object, bool, or low cardinality numeric
+        - Normal: numeric variables that pass Shapiro-Wilk test
+        - Non-normal: numeric variables that fail Shapiro-Wilk test
+        """
+        from scipy import stats
+        
+        for col in self.data.columns:
+            # Skip columns with too many missing values
+            if self.data[col].isna().mean() > 0.5:
+                continue
+                
+            # Check if column is categorical
+            if self.data[col].dtype == 'object' or self.data[col].dtype == 'bool':
+                self._categorical_vars.append(col)
+                continue
+                
+            # Check for low cardinality numeric (likely categorical)
+            if self.data[col].dtype.kind in 'ifu' and len(self.data[col].unique()) <= 10:
+                self._categorical_vars.append(col)
+                continue
+                
+            # For numeric columns, check normality (sample up to 5000 values)
+            if self.data[col].dtype.kind in 'ifu':
+                # Get non-null values
+                values = self.data[col].dropna()
+                
+                # Sample if necessary to speed up test
+                if len(values) > 5000:
+                    values = values.sample(5000, random_state=42)
+                
+                # Skip if too few values
+                if len(values) < 8:
+                    continue
+                    
+                # Test for normality
+                try:
+                    _, p_value = stats.shapiro(values)
+                    if p_value > 0.05:  # Normal distribution
+                        self._normal_vars.append(col)
+                    else:  # Non-normal distribution
+                        self._nonnormal_vars.append(col)
+                except:
+                    # If test fails, assume non-normal
+                    self._nonnormal_vars.append(col)
+        
+        # Print helpful message
+        print(f"Auto-detected {len(self._categorical_vars)} categorical, {len(self._normal_vars)} normal, and {len(self._nonnormal_vars)} non-normal variables.")
+        print("You can customize these with .categorize(), .measure_normal(), and .measure_nonnormal() methods.")
+    
+    def categorize(self, variables: List[str]):
+        """
+        Define categorical variables to include in the analysis.
+        
+        Parameters:
+        -----------
+        variables : List[str]
+            List of column names to treat as categorical
+            
+        Returns:
+        --------
+        self : EasyFlow
+            For method chaining
+        """
+        self._categorical_vars = variables
+        return self
+    
+    def measure_normal(self, variables: List[str]):
+        """
+        Define normally distributed variables to include in the analysis.
+        
+        Parameters:
+        -----------
+        variables : List[str]
+            List of column names of normally distributed variables
+            
+        Returns:
+        --------
+        self : EasyFlow
+            For method chaining
+        """
+        self._normal_vars = variables
+        return self
+    
+    def measure_nonnormal(self, variables: List[str]):
+        """
+        Define non-normally distributed variables to include in the analysis.
+        
+        Parameters:
+        -----------
+        variables : List[str]
+            List of column names of non-normally distributed variables
+            
+        Returns:
+        --------
+        self : EasyFlow
+            For method chaining
+        """
+        self._nonnormal_vars = variables
+        return self
+    
+    def _generate_exclusion_label(self, mask):
+        """
+        Generate a user-friendly label from a pandas mask condition.
+        """
+        # Try to extract code from the mask if possible
+        try:
+            mask_str = inspect.getsource(mask.func if hasattr(mask, 'func') else mask)
+            # Clean up the code to make a readable label
+            mask_str = mask_str.strip()
+            
+            # Extract condition from common patterns
+            condition_pattern = r'data\["([^"]+)"\]\s*([<>=!]+)\s*([^\s]+)'
+            match = re.search(condition_pattern, mask_str)
+            
+            if match:
+                column, operator, value = match.groups()
+                return f"{column} {operator} {value}"
+            
+            return "Exclusion criteria"
+        except:
+            return "Exclusion criteria"
+    
+    def exclude(self, mask, label: Optional[str] = None):
+        """
+        Add an exclusion step based on a boolean mask.
+        
+        Parameters:
+        -----------
+        mask : pandas.Series
+            Boolean mask to select the subset of data to keep
+        label : str, optional
+            Label describing the exclusion. If not provided, tries to generate one.
+            
+        Returns:
+        --------
+        self : EasyFlow
+            For method chaining
+        """
+        # Generate label if not provided
+        if label is None:
+            label = self._generate_exclusion_label(mask)
+        
+        # Apply the mask to the current data
+        new_data = self._current_data[mask]
+        
+        # Store the step information
+        self._exclusion_steps.append({
+            'previous_data': self._current_data,
+            'mask': mask,
+            'new_data': new_data,
+            'label': label
+        })
+        
+        # Update current data
+        self._current_data = new_data
+        
+        return self
+    
+    def _create_equiflow(self):
+        """
+        Create and configure the underlying EquiFlow instance.
+        """
+        # Create initial EquiFlow instance with the original data
+        ef = EquiFlow(
+            data=self.data,
+            initial_cohort_label=self.title,
+            categorical=self._categorical_vars,
+            normal=self._normal_vars,
+            nonnormal=self._nonnormal_vars
+        )
+        
+        # Add all exclusion steps
+        for i, step in enumerate(self._exclusion_steps):
+            # For the first step, pass the mask directly
+            if i == 0:
+                ef.add_exclusion(
+                    mask=step['mask'],
+                    exclusion_reason=step['label'],
+                    new_cohort_label=f"Step {i+1}"
+                )
+            else:
+                # For subsequent steps, we need to apply the mask to the current data
+                # since the original mask was for a different dataframe
+                indices = step['previous_data'][step['mask']].index
+                next_mask = self.data.index.isin(indices)
+                ef.add_exclusion(
+                    mask=next_mask,
+                    exclusion_reason=step['label'],
+                    new_cohort_label=f"Step {i+1}"
+                )
+        
+        self._equiflow = ef
+        return ef
+    
+    def generate(self, output: str = "flow_diagram", show: bool = True, format: str = "pdf"):
+        """
+        Generate the flow diagram and tables.
+        
+        Parameters:
+        -----------
+        output : str, optional
+            Base name for output files
+        show : bool, optional
+            Whether to display the flow diagram
+        format : str, optional
+            Output format for the diagram (pdf, svg, png)
+            
+        Returns:
+        --------
+        self : EasyFlow
+            For method chaining
+        """
+        # Create EquiFlow instance if not already created
+        if self._equiflow is None:
+            ef = self._create_equiflow()
+        else:
+            ef = self._equiflow
+        
+        # Get tables
+        self.flow_table = ef.view_table_flows()
+        self.characteristics = ef.view_table_characteristics()
+        self.drifts = ef.view_table_drifts()
+        
+        # Generate and save the diagram
+        ef.plot_flows(
+            output_file=output,
+            display_flow_diagram=show
+        )
+        
+        # Store the diagram path for reference
+        self.diagram = os.path.join("imgs", f"{output}.{format}")
+        
+        return self
+    
+    @classmethod
+    def quick_flow(cls, 
+                  data: pd.DataFrame, 
+                  exclusions: List[Tuple[pd.Series, str]], 
+                  output: str = "flow_diagram",
+                  auto_detect: bool = True):
+        """
+        Quickly create a flow diagram with a list of exclusion steps.
+        
+        Parameters:
+        -----------
+        data : pd.DataFrame
+            Initial cohort data
+        exclusions : List[Tuple[pd.Series, str]]
+            List of (mask, label) pairs defining exclusions
+        output : str, optional
+            Base name for output files
+        auto_detect : bool, optional
+            Whether to auto-detect variable types
+            
+        Returns:
+        --------
+        flow : EasyFlow
+            The configured EasyFlow instance
+        """
+        # Create EasyFlow instance
+        flow = cls(data, auto_detect=auto_detect)
+        
+        # Add all exclusion steps
+        for mask, label in exclusions:
+            flow.exclude(mask, label)
+        
+        # Generate the diagram
+        flow.generate(output=output)
+        
+        return flow

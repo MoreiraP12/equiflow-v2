@@ -4,7 +4,7 @@ digraph {
 	node [fillcolor=white fixedsize=true fontname=Helvetica height=1 shape=box style=filled width=2.5]
 	edge [arrowhead=vee arrowsize=0.5 dir=forward minlen=1]
 	A0 [label="100,000 patients
-in MIMIC-IV" fontname=Helvetica shape=box]
+MIMIC-IV" fontname=Helvetica shape=box]
 	A1 [label="66,397 patients
 with English Proficiency data" fontname=Helvetica shape=box]
 	plot_dist1 [label="" color=transparent height=1.2 image="part1.svg" imagepos=bc imagescale=true shape=box width=3.0]

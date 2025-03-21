@@ -1,0 +1,68 @@
+// Cohort Exclusion Process
+digraph {
+	graph [fontname=Helvetica splines=ortho]
+	node [fillcolor=white fixedsize=true fontname=Helvetica height=1 shape=box style=filled width=2.5]
+	edge [arrowhead=vee arrowsize=0.5 dir=forward minlen=1]
+	A0 [label="1,000 patients
+All patients" fontname=Helvetica shape=box]
+	A1 [label="1,000 patients
+Complete demographic data" fontname=Helvetica shape=box]
+	A2 [label="864 patients
+Normal BMI patients" fontname=Helvetica shape=box]
+	A3 [label="795 patients
+Normal lab values" fontname=Helvetica shape=box]
+	A4 [label="759 patients
+Standard inpatients" fontname=Helvetica shape=box]
+	E0 [label="0 patients excluded for
+Missing race/ethnicity data" fillcolor=floralwhite shape=box style=filled]
+	E1 [label="136 patients excluded for
+BMI > 35 kg/m²" fillcolor=floralwhite shape=box style=filled]
+	E2 [label="69 patients excluded for
+Abnormal lab values (> 10)" fillcolor=floralwhite shape=box style=filled]
+	E3 [label="36 patients excluded for
+Length of stay > 14 days" fillcolor=floralwhite shape=box style=filled]
+	IA0 [label="" height=0 shape=point]
+	IA1 [label="" height=0 shape=point]
+	IA2 [label="" height=0 shape=point]
+	IA3 [label="" height=0 shape=point]
+	IA4 [label="" height=0 shape=point]
+	A0 -> IA0 [arrowhead=none]
+	IA0 -> A1
+	A1 -> IA1 [arrowhead=none]
+	IA1 -> A2
+	A2 -> IA2 [arrowhead=none]
+	IA2 -> A3
+	A3 -> IA3 [arrowhead=none]
+	IA3 -> A4
+	IA0 -> E0 [constraint=false]
+	IA1 -> E1 [constraint=false]
+	IA2 -> E2 [constraint=false]
+	IA3 -> E3 [constraint=false]
+	{
+		rank=same
+		IA0
+		E0
+	}
+	{
+		rank=same
+		IA1
+		E1
+	}
+	{
+		rank=same
+		IA2
+		E2
+	}
+	{
+		rank=same
+		IA3
+		E3
+	}
+	legend [label="" color=transparent height=1.2 image="legend.svg" imagepos=bl imagescale=true shape=box width=2.5]
+	E0 -> legend [style=invis]
+	{
+		rank=same
+		E0
+		legend
+	}
+}
