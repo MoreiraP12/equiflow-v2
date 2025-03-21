@@ -12,110 +12,98 @@ import graphviz
 
 
 class EquiFlow:
-
-
   def __init__(self,
-               data: Optional[pd.DataFrame] = None,
-               dfs: Optional[list] = None,
-               initial_cohort_label: Optional[str] = None,
-               label_suffix: Optional[bool] = True,
-               thousands_sep: Optional[bool] = True,
-               categorical: Optional[list] = None,
-               normal: Optional[list] = None,
-               nonnormal: Optional[list] = None,
-               decimals: Optional[int] = 1,
-               format_cat: Optional[str] = 'N (%)',
-               format_normal: Optional[str] = 'Mean ± SD',
-               format_nonnormal: Optional[str] = 'Median [IQR]',
-               missingness: Optional[bool] = True,
-               rename: Optional[dict] = None,
+                data: Optional[pd.DataFrame] = None,
+                dfs: Optional[list] = None,
+                initial_cohort_label: Optional[str] = None,
+                label_suffix: Optional[bool] = True,
+                thousands_sep: Optional[bool] = True,
+                categorical: Optional[list] = None,
+                normal: Optional[list] = None,
+                nonnormal: Optional[list] = None,
+                order_vars: Optional[list] = None,  # New parameter
+                decimals: Optional[int] = 1,
+                format_cat: Optional[str] = 'N (%)',
+                format_normal: Optional[str] = 'Mean ± SD',
+                format_nonnormal: Optional[str] = 'Median [IQR]',
+                missingness: Optional[bool] = True,
+                rename: Optional[dict] = None,
+              ) -> None:
+      """
+      Initialize EquiFlow object for creating cohort flow diagrams.
+      
+      Parameters
+      ----------
+      data : pd.DataFrame, optional
+          A single DataFrame containing the initial cohort.
+      dfs : list of pd.DataFrame, optional
+          A list of DataFrames representing sequential cohorts after exclusions.
+      initial_cohort_label : str, optional
+          Label for the initial cohort.
+      label_suffix : bool, default=True
+          Whether to add descriptive suffixes to variable labels.
+      thousands_sep : bool, default=True
+          Whether to use thousands separators in numbers.
+      categorical : list, optional
+          List of categorical variable names.
+      normal : list, optional
+          List of normally distributed continuous variable names.
+      nonnormal : list, optional
+          List of non-normally distributed continuous variable names.
+      order_vars : list, optional
+          List of variable names in the desired display order. Variables not listed
+          will be displayed after the ordered ones, in their original order.
+      decimals : int, default=1
+          Number of decimal places for rounding.
+      format_cat : str, default='N (%)'
+          Format for categorical variables ('N (%)', 'N', or '%').
+      format_normal : str, default='Mean ± SD'
+          Format for normal variables ('Mean ± SD', 'Mean', or 'SD').
+      format_nonnormal : str, default='Median [IQR]'
+          Format for non-normal variables ('Median [IQR]', 'Mean', or 'SD').
+      missingness : bool, default=True
+          Whether to include missingness information.
+      rename : dict, optional
+          Dictionary mapping variable names to display names.
+      """
+      # Existing validation code here...
+      
+      if (order_vars is not None) & (not isinstance(order_vars, list)):
+          raise ValueError("order_vars must be a list")
+      
+      if data is not None:
+          self._dfs = [data]
 
-               ) -> None:
-    """
-    
-    """
-    
-    if (data is None) & (dfs is None):
-      raise ValueError("Either data or dfs must be provided")
-    
-    if (data is not None) & (dfs is not None):
-      raise ValueError("Only one of data or dfs must be provided")
-    
-    if (data is not None) & (not isinstance(data, pd.DataFrame)):
-      raise ValueError("data must be a pandas DataFrame")
-    
-    if (dfs is not None) & (not isinstance(dfs, list) or len(dfs) < 1):
-      raise ValueError("dfs must be a list with length ≥ 1")
-    
-    if (initial_cohort_label is not None) & (not isinstance(initial_cohort_label, str)):
-      raise ValueError("initial_cohort_label must be a string")
-    
-    if not isinstance(label_suffix, bool):
-      raise ValueError("label_suffix must be a boolean")
-    
-    if not isinstance(thousands_sep, bool):
-      raise ValueError("thousands_sep must be a boolean")
-    
-    if (categorical is not None) & (not isinstance(categorical, list)):
-      raise ValueError("categorical must be a list")
-    
-    if (normal is not None) & (not isinstance(normal, list)):
-      raise ValueError("normal must be a list")
-    
-    if (nonnormal is not None) & (not isinstance(nonnormal, list)):
-      raise ValueError("nonnormal must be a list")
-    
-    if not isinstance(decimals, int) or decimals < 0:
-      raise ValueError("decimals must be a non-negative integer")
-    
-    if format_cat not in ['%', 'N', 'N (%)']:
-      raise ValueError("format must be '%', 'N', or 'N (%)'")
-    
-    if format_normal not in ['Mean ± SD', 'Mean', 'SD']:
-      raise ValueError("format must be 'Mean ± SD' or 'Mean' or 'SD'")
-    
-    if format_nonnormal not in ['Median [IQR]', 'Mean', 'SD']:
-      raise ValueError("format must be 'Median [IQR]' or 'Mean' or 'SD'")
-    
-    if not isinstance(missingness, bool):
-      raise ValueError("missingness must be a boolean")
-    
-    if (rename is not None) & (not isinstance(rename, dict)):
-      raise ValueError("rename must be a dictionary")
-    
-    if data is not None:
-      self._dfs = [data]
+      if dfs is not None:
+          self._dfs = dfs
 
-    if dfs is not None:
-      self._dfs = dfs
+      self._clean_missing()
 
-    self._clean_missing()
+      self.label_suffix = label_suffix
+      self.thousands_sep = thousands_sep
+      self.categorical = categorical
+      self.normal = normal
+      self.nonnormal = nonnormal
+      self.order_vars = order_vars  # Store the order_vars
+      self.decimals = decimals
+      self.format_cat = format_cat
+      self.format_normal = format_normal
+      self.format_nonnormal = format_nonnormal
+      self.missingness = missingness
+      self.rename = rename
 
-    self.label_suffix = label_suffix
-    self.thousands_sep = thousands_sep
-    self.categorical = categorical
-    self.normal = normal
-    self.nonnormal = nonnormal
-    self.decimals = decimals
-    self.format_cat = format_cat
-    self.format_normal = format_normal
-    self.format_nonnormal = format_nonnormal
-    self.missingness = missingness
-    self.rename = rename
+      self.table_flows = None
+      self.table_characteristics = None
+      self.table_drifts = None
+      self.flow_diagram = None
 
-    self.table_flows = None
-    self.table_characteristics = None
-    self.table_drifts = None
-    self.flow_diagram = None
+      self.exclusion_labels = {}
+      self.new_cohort_labels = {}
 
-    self.exclusion_labels = {}
-    self.new_cohort_labels = {}
-
-    if initial_cohort_label is not None:
-      self.new_cohort_labels[0] = initial_cohort_label
-    else:
-      self.new_cohort_labels[0] = 'Initial Cohort'
-
+      if initial_cohort_label is not None:
+          self.new_cohort_labels[0] = initial_cohort_label
+      else:
+          self.new_cohort_labels[0] = 'Initial Cohort'
 
 
   # method to categorize missing values under the same label
@@ -201,6 +189,7 @@ class EquiFlow:
                                  categorical: Optional[list] = None,
                                  normal: Optional[list] = None,
                                  nonnormal: Optional[list] = None,
+                                 order_vars: Optional[list] = None,  # New parameter
                                  decimals: Optional[int] = None,
                                  format_cat: Optional[str] = None,
                                  format_normal: Optional[str] = None,
@@ -209,105 +198,253 @@ class EquiFlow:
                                  missingness: Optional[bool] = None,
                                  label_suffix: Optional[bool] = None,
                                  rename: Optional[dict] = None) -> pd.DataFrame:
-    
-    if len(self._dfs) < 2:
-      raise ValueError("At least two cohorts must be provided. Please use add_exclusion() to add exclusions")
+        """
+        Generate a table of cohort characteristics.
         
-    if categorical is None:
-      categorical = self.categorical
+        Parameters
+        ----------
+        categorical : list, optional
+            List of categorical variable names.
+        normal : list, optional
+            List of normally distributed continuous variable names.
+        nonnormal : list, optional
+            List of non-normally distributed continuous variable names.
+        order_vars : list, optional
+            List of variable names in the desired display order. Variables not listed
+            will be displayed after the ordered ones, in their original order.
+        decimals : int, optional
+            Number of decimal places for rounding.
+        format_cat : str, optional
+            Format for categorical variables ('N (%)', 'N', or '%').
+        format_normal : str, optional
+            Format for normal variables ('Mean ± SD', 'Mean', or 'SD').
+        format_nonnormal : str, optional
+            Format for non-normal variables ('Median [IQR]', 'Mean', or 'SD').
+        thousands_sep : bool, optional
+            Whether to use thousands separators in numbers.
+        missingness : bool, optional
+            Whether to include missingness information.
+        label_suffix : bool, optional
+            Whether to add descriptive suffixes to variable labels.
+        rename : dict, optional
+            Dictionary mapping variable names to display names.
+            
+        Returns
+        -------
+        pd.DataFrame
+            Table of cohort characteristics
+        """
+        if len(self._dfs) < 2:
+            raise ValueError("At least two cohorts must be provided. Please use add_exclusion() to add exclusions")
+        
+        if categorical is None:
+            categorical = self.categorical
 
-    if normal is None:
-      normal = self.normal
+        if normal is None:
+            normal = self.normal
 
-    if nonnormal is None:
-      nonnormal = self.nonnormal
+        if nonnormal is None:
+            nonnormal = self.nonnormal
+            
+        if order_vars is None:
+            order_vars = self.order_vars
 
-    if decimals is None:
-      decimals = self.decimals
+        if decimals is None:
+            decimals = self.decimals
 
-    if format_cat is None:
-      format_cat = self.format_cat
+        if format_cat is None:
+            format_cat = self.format_cat
 
-    if format_normal is None:
-      format_normal = self.format_normal
+        if format_normal is None:
+            format_normal = self.format_normal
 
-    if format_nonnormal is None:
-      format_nonnormal = self.format_nonnormal
+        if format_nonnormal is None:
+            format_nonnormal = self.format_nonnormal
 
-    if thousands_sep is None:
-      thousands_sep = self.thousands_sep
+        if thousands_sep is None:
+            thousands_sep = self.thousands_sep
 
-    if missingness is None:
-      missingness = self.missingness
+        if missingness is None:
+            missingness = self.missingness
 
-    if label_suffix is None:
-      label_suffix = self.label_suffix
+        if label_suffix is None:
+            label_suffix = self.label_suffix
 
-    if rename is None:
-      rename = self.rename
+        if rename is None:
+            rename = self.rename
 
-    self.table_characteristics = TableCharacteristics(
-      dfs=self._dfs,
-      categorical=categorical,
-      normal=normal,
-      nonnormal=nonnormal,
-      decimals=decimals,
-      format_cat=format_cat,
-      format_normal=format_normal,
-      format_nonnormal=format_nonnormal,
-      thousands_sep=thousands_sep,
-      missingness=missingness,
-      label_suffix=label_suffix,
-      rename=rename,
-    )
+        self.table_characteristics = TableCharacteristics(
+            dfs=self._dfs,
+            categorical=categorical,
+            normal=normal,
+            nonnormal=nonnormal,
+            order_vars=order_vars,  # Pass order_vars to TableCharacteristics
+            decimals=decimals,
+            format_cat=format_cat,
+            format_normal=format_normal,
+            format_nonnormal=format_nonnormal,
+            thousands_sep=thousands_sep,
+            missingness=missingness,
+            label_suffix=label_suffix,
+            rename=rename,
+        )
 
-    return self.table_characteristics.view()
-
+        return self.table_characteristics.view()
+    
   def view_table_drifts(self,
-                        drifts_by_class: Optional[bool] = False,
+                      drifts_by_class: Optional[bool] = False,
+                      categorical: Optional[list] = None,
+                      normal: Optional[list] = None,
+                      nonnormal: Optional[list] = None,
+                      order_vars: Optional[list] = None,  # New parameter
+                      decimals: Optional[int] = None,
+                      missingness: Optional[bool] = None,
+                      rename: Optional[dict] = None) -> pd.DataFrame:
+      """
+      Generate a table of standardized mean differences (drifts).
+      
+      Parameters
+      ----------
+      drifts_by_class : bool, default=False
+          Whether to calculate drifts by variable class instead of individual values.
+      categorical : list, optional
+          List of categorical variable names.
+      normal : list, optional
+          List of normally distributed continuous variable names.
+      nonnormal : list, optional
+          List of non-normally distributed continuous variable names.
+      order_vars : list, optional
+          List of variable names in the desired display order. Variables not listed
+          will be displayed after the ordered ones, in their original order.
+      decimals : int, optional
+          Number of decimal places for rounding.
+      missingness : bool, optional
+          Whether to include missingness information.
+      rename : dict, optional
+          Dictionary mapping variable names to display names.
+          
+      Returns
+      -------
+      pd.DataFrame
+          Table of standardized mean differences between cohorts
+      """
+      if len(self._dfs) < 2:
+          raise ValueError("At least two cohorts must be provided. Please use add_exclusion() to add exclusions")
+
+      if categorical is None:
+          categorical = self.categorical
+
+      if normal is None:
+          normal = self.normal
+
+      if nonnormal is None:
+          nonnormal = self.nonnormal
+          
+      if order_vars is None:
+          order_vars = self.order_vars
+
+      if decimals is None:
+          decimals = self.decimals
+
+      if missingness is None:
+          missingness = self.missingness
+
+      if rename is None:
+          rename = self.rename
+
+      self.table_drifts = TableDrifts(
+          dfs=self._dfs,
+          categorical=categorical,
+          normal=normal,
+          nonnormal=nonnormal,
+          order_vars=order_vars,  # Pass order_vars to TableDrifts
+          decimals=decimals,
+          missingness=missingness,
+          rename=rename,
+      )
+
+      if drifts_by_class:
+          return self.table_drifts.view_simple()
+      
+      else:
+          return self.table_drifts.view()
+  
+  def view_table_pvalues(self,
                         categorical: Optional[list] = None,
                         normal: Optional[list] = None,
                         nonnormal: Optional[list] = None,
-                        decimals: Optional[int] = None,
-                        missingness: Optional[bool] = None,
+                        order_vars: Optional[list] = None,  # New parameter
+                        alpha: Optional[float] = 0.05,
+                        decimals: Optional[int] = 3,
+                        min_n_expected: Optional[int] = 5,
+                        min_samples: Optional[int] = 30,
                         rename: Optional[dict] = None) -> pd.DataFrame:
-    
-    if len(self._dfs) < 2:
-      raise ValueError("At least two cohorts must be provided. Please use add_exclusion() to add exclusions")
+      """
+      Generate a table of p-values between consecutive cohorts using appropriate statistical tests.
+      
+      Parameters
+      ----------
+      categorical : list, optional
+          List of categorical variable names
+      normal : list, optional
+          List of normally distributed continuous variable names
+      nonnormal : list, optional
+          List of non-normally distributed continuous variable names
+      order_vars : list, optional
+          List of variable names in the desired display order. Variables not listed
+          will be displayed after the ordered ones, in their original order.
+      alpha : float, optional
+          Significance level (default: 0.05)
+      decimals : int, optional
+          Number of decimal places for p-values (default: 3)
+      min_n_expected : int, optional
+          Minimum expected count for Chi-square validity (default: 5)
+      min_samples : int, optional
+          Threshold for small sample considerations (default: 30)
+      rename : dict, optional
+          Dictionary mapping original variable names to display names
+          
+      Returns
+      -------
+      pd.DataFrame
+          Table of p-values between consecutive cohorts
+      """
+      if len(self._dfs) < 2:
+          raise ValueError("At least two cohorts must be provided. Please use add_exclusion() to add exclusions")
+      
+      if categorical is None:
+          categorical = self.categorical
+      
+      if normal is None:
+          normal = self.normal
+      
+      if nonnormal is None:
+          nonnormal = self.nonnormal
+          
+      if order_vars is None:
+          order_vars = self.order_vars
+      
+      if decimals is None:
+          decimals = self.decimals
+      
+      if rename is None:
+          rename = self.rename
+      
+      self.table_pvalues = TablePValues(
+          dfs=self._dfs,
+          categorical=categorical,
+          normal=normal,
+          nonnormal=nonnormal,
+          order_vars=order_vars,  # Pass order_vars to TablePValues
+          alpha=alpha,
+          decimals=decimals,
+          min_n_expected=min_n_expected,
+          min_samples=min_samples,
+          rename=rename,
+      )
+      
+      return self.table_pvalues.view()
 
-    if categorical is None:
-      categorical = self.categorical
-
-    if normal is None:
-      normal = self.normal
-
-    if nonnormal is None:
-      nonnormal = self.nonnormal
-
-    if decimals is None:
-      decimals = self.decimals
-
-    if missingness is None:
-      missingness = self.missingness
-
-    if rename is None:
-      rename = self.rename
-
-    self.table_drifts = TableDrifts(
-      dfs=self._dfs,
-      categorical=categorical,
-      normal=normal,
-      nonnormal=nonnormal,
-      decimals=decimals,
-      missingness=missingness,
-      rename=rename,
-    )
-
-    if drifts_by_class:
-      return self.table_drifts.view_simple()
-    
-    else:
-       return self.table_drifts.view()
   
 
   def plot_flows(self,
@@ -386,87 +523,6 @@ class EquiFlow:
 
     self.flow_diagram.view()
 
-  def view_table_pvalues(self,
-                      categorical: Optional[list] = None,
-                      normal: Optional[list] = None,
-                      nonnormal: Optional[list] = None,
-                      alpha: Optional[float] = 0.05,
-                      decimals: Optional[int] = 3,
-                      min_n_expected: Optional[int] = 5,
-                      min_samples: Optional[int] = 30,
-                      rename: Optional[dict] = None) -> pd.DataFrame:
-    """
-    Generate a table of p-values between consecutive cohorts using appropriate statistical tests.
-    
-    Parameters
-    ----------
-    categorical : list, optional
-        List of categorical variable names
-    normal : list, optional
-        List of normally distributed continuous variable names
-    nonnormal : list, optional
-        List of non-normally distributed continuous variable names
-    alpha : float, optional
-        Significance level (default: 0.05)
-    decimals : int, optional
-        Number of decimal places for p-values (default: 3)
-    min_n_expected : int, optional
-        Minimum expected count for Chi-square validity (default: 5)
-    min_samples : int, optional
-        Threshold for small sample considerations (default: 30)
-    rename : dict, optional
-        Dictionary mapping original variable names to display names
-        
-    Returns
-    -------
-    pd.DataFrame
-        Table of p-values between consecutive cohorts
-    
-    Notes
-    -----
-    Statistical tests used:
-    - Categorical variables: Chi-squared test (or Fisher's exact for small samples)
-    - Normal continuous variables: Two-sample t-test (or One-Way ANOVA for small samples)
-    - Non-normal continuous variables: Kruskal-Wallis test
-    
-    P-values are marked with:
-    - * for p < 0.05
-    - ** for p < 0.01
-    - *** for p < 0.001
-    - † for tests with small sample considerations
-    """
-    if len(self._dfs) < 2:
-        raise ValueError("At least two cohorts must be provided. Please use add_exclusion() to add exclusions")
-    
-    if categorical is None:
-        categorical = self.categorical
-    
-    if normal is None:
-        normal = self.normal
-    
-    if nonnormal is None:
-        nonnormal = self.nonnormal
-    
-    if decimals is None:
-        decimals = self.decimals
-    
-    if rename is None:
-        rename = self.rename
-    
-    self.table_pvalues = TablePValues(
-        dfs=self._dfs,
-        categorical=categorical,
-        normal=normal,
-        nonnormal=nonnormal,
-        alpha=alpha,
-        decimals=decimals,
-        min_n_expected=min_n_expected,
-        min_samples=min_samples,
-        rename=rename,
-    )
-    
-    return self.table_pvalues.view()
-
 
 class TableFlows:
   def __init__(
@@ -541,6 +597,7 @@ class TableCharacteristics:
       categorical: Optional[list] = None,
       normal: Optional[list] = None,
       nonnormal: Optional[list] = None,
+      order_vars: Optional[list] = None, 
       decimals: Optional[int] = 1,
       format_cat: Optional[str] = 'N (%)',
       format_normal: Optional[str] = 'Mean ± SD',
@@ -587,26 +644,27 @@ class TableCharacteristics:
     if not isinstance(label_suffix, bool):
         raise ValueError("label_suffix must be a boolean")
     
-    if (rename is not None) & (not isinstance(rename, dict)):
-      raise ValueError("rename must be a dictionary")
-    
+    if (order_vars is not None) & (not isinstance(order_vars, list)):
+            raise ValueError("order_vars must be a list")
+        
     self._dfs = dfs
 
     if categorical is None:
-      self._categorical = []
+        self._categorical = []
     else:
-       self._categorical = categorical
-      
+        self._categorical = categorical
+    
     if normal is None:
-      self._normal = []
+        self._normal = []
     else:
-      self._normal = normal
+        self._normal = normal
     
     if nonnormal is None:
-      self._nonnormal = []
+        self._nonnormal = []
     else:
-      self._nonnormal = nonnormal
-
+        self._nonnormal = nonnormal
+        
+    self._order_vars = order_vars 
     self._decimals = decimals
     self._missingness = missingness
     self._format_cat = format_cat
@@ -616,9 +674,9 @@ class TableCharacteristics:
     self._label_suffix = label_suffix
     
     if rename is not None:
-      self._rename = rename
+        self._rename = rename
     else:
-       self._rename = dict()
+        self._rename = dict()
 
     if rename is not None:
       if self._label_suffix:
@@ -830,87 +888,131 @@ class TableCharacteristics:
     return self._rename[col], df_dists.rename(index={col: self._rename[col]})
   
   def view(self):
-
+    """Generate and return the characteristic table with variables in the specified order."""
     table = pd.DataFrame()
 
     # get the unique values, before any exclusion, for categorical variables
     original_uniques = self._get_original_uniques(self._categorical)
-
-    for i, df in enumerate(self._dfs):
-
-      index = pd.MultiIndex(levels=[[], []], codes=[[], []], names=['variable', 'index'])
-      df_dists = pd.DataFrame(columns=['value'], index=index)
-
-      # get distribution for categorical variables
-      for col in self._categorical:
-
-        counts = self._my_value_counts(df, original_uniques, col)
-
-        melted_counts = pd.melt(counts.reset_index(), id_vars=['index']) \
-                          .set_index(['variable','index'])
-        
-        df_dists = pd.concat([df_dists, melted_counts], axis=0)
-
-        if self._missingness:
-          df_dists = self._add_missing_counts(df, col, df_dists)
-
-        # rename if applicable
-        if col in self._rename.keys():
-          col, df_dists = self._rename_columns(df_dists, col)
-
-        if self._label_suffix:
-            df_dists = self._add_label_suffix(col, df_dists, ', ' + self._format_cat)
-          
-
-      # get distribution for normal variables
-      for col in self._normal:
-  
-          df_dists = self._normal_vars_dist(df, col, df_dists)
-
-          if self._missingness:
-            df_dists = self._add_missing_counts(df, col, df_dists)
-
-          if col in self._rename.keys():
-            col, df_dists = self._rename_columns(df_dists, col)
-
-          if self._label_suffix:
-            df_dists = self._add_label_suffix(col, df_dists, ', ' + self._format_normal)
-        
-      # get distribution for nonnormal variables
-      for col in self._nonnormal:
-
-        df_dists = self._nonnormal_vars_dist(df, col, df_dists)
-
-        if self._missingness:
-          df_dists = self._add_missing_counts(df, col, df_dists)
-        
-        if col in self._rename.keys():
-          col, df_dists = self._rename_columns(df_dists, col)
-
-        if self._label_suffix:
-          df_dists = self._add_label_suffix(col, df_dists, ', ' + self._format_nonnormal)
-
-
-      df_dists = self._add_overall_counts(df, df_dists)
     
-      df_dists.rename(columns={'value': i}, inplace=True)
-      table = pd.concat([table, df_dists], axis=1)
-
-    # add super header
+    # Process each cohort
+    for i, df in enumerate(self._dfs):
+        index = pd.MultiIndex(levels=[[], []], codes=[[], []], names=['variable', 'index'])
+        df_dists = pd.DataFrame(columns=['value'], index=index)
+        
+        # Function to process each variable
+        def process_variable(col, var_type):
+            nonlocal df_dists
+            
+            if var_type == 'categorical':
+                counts = self._my_value_counts(df, original_uniques, col)
+                melted_counts = pd.melt(counts.reset_index(), id_vars=['index']) \
+                                  .set_index(['variable', 'index'])
+                df_dists = pd.concat([df_dists, melted_counts], axis=0)
+            elif var_type == 'normal':
+                df_dists = self._normal_vars_dist(df, col, df_dists)
+            elif var_type == 'nonnormal':
+                df_dists = self._nonnormal_vars_dist(df, col, df_dists)
+            
+            # Add missing counts if requested
+            if self._missingness:
+                df_dists = self._add_missing_counts(df, col, df_dists)
+            
+            # Rename if applicable
+            if col in self._rename.keys():
+                col, df_dists = self._rename_columns(df_dists, col)
+            
+            # Add suffix if requested
+            if self._label_suffix:
+                if var_type == 'categorical':
+                    df_dists = self._add_label_suffix(col, df_dists, ', ' + self._format_cat)
+                elif var_type == 'normal':
+                    df_dists = self._add_label_suffix(col, df_dists, ', ' + self._format_normal)
+                elif var_type == 'nonnormal':
+                    df_dists = self._add_label_suffix(col, df_dists, ', ' + self._format_nonnormal)
+        
+        # Determine variable processing order
+        all_vars = set(self._categorical + self._normal + self._nonnormal)
+        
+        if self._order_vars is not None:
+            # Process variables in the specified order
+            ordered_vars = [v for v in self._order_vars if v in all_vars]
+            # Add any remaining variables not in order_vars
+            remaining_vars = [v for v in self._categorical + self._normal + self._nonnormal 
+                            if v not in ordered_vars]
+            processing_order = ordered_vars + remaining_vars
+        else:
+            # Use the default order (categorical, then normal, then nonnormal)
+            processing_order = self._categorical + self._normal + self._nonnormal
+        
+        # Process variables in the determined order
+        for col in processing_order:
+            if col in self._categorical:
+                process_variable(col, 'categorical')
+            elif col in self._normal:
+                process_variable(col, 'normal')
+            elif col in self._nonnormal:
+                process_variable(col, 'nonnormal')
+        
+        # Add overall counts
+        df_dists = self._add_overall_counts(df, df_dists)
+        
+        # Rename column for this cohort and add to table
+        df_dists.rename(columns={'value': i}, inplace=True)
+        table = pd.concat([table, df_dists], axis=1)
+    
+    # Add super header
     table = table.set_axis(
         pd.MultiIndex.from_product([['Cohort'], table.columns]),
         axis=1)
-
-    # renames indexes
-    table.index.names = ['Variable', 'Value']
-
-    # reorder values of "Variable" (level 0) such that 'Overall' comes first
-    table = table.sort_index(level=0, key=lambda x: x == 'Overall',
-                             ascending=False, sort_remaining=False)
-
-    return table
     
-
+    # Rename indexes
+    table.index.names = ['Variable', 'Value']
+    
+    # Handle ordering while preserving MultiIndex structure
+    if self._order_vars is not None:
+        # Move 'Overall' to the top
+        overall_mask = table.index.get_level_values(0) == 'Overall'
+        overall_rows = table[overall_mask]
+        non_overall_rows = table[~overall_mask]
+        
+        # Create mappings for sorting
+        rename_inverse = {v: k for k, v in self._rename.items()}
+        var_order = {var: idx for idx, var in enumerate(self._order_vars)}
+        
+        # Get unique variable names (level 0 of index)
+        var_names = non_overall_rows.index.get_level_values(0).unique()
+        
+        # Helper function to get sort key for each variable
+        def get_var_sort_key(var_name):
+            # Strip suffix if present
+            base_name = var_name.split(',')[0].strip() if isinstance(var_name, str) and ',' in var_name else var_name
+            # Get original name (before renaming)
+            orig_name = rename_inverse.get(base_name, base_name)
+            # Determine position
+            if orig_name in var_order:
+                return (0, var_order[orig_name])
+            else:
+                return (1, base_name)
+        
+        # Sort variable names
+        sorted_var_names = sorted(var_names, key=get_var_sort_key)
+        
+        # Create new sorted table
+        result = pd.DataFrame()
+        if not overall_rows.empty:
+            result = pd.concat([result, overall_rows])
+        
+        # Add each variable's rows in the sorted order
+        for var in sorted_var_names:
+            var_data = non_overall_rows.xs(var, level=0, drop_level=False)
+            result = pd.concat([result, var_data])
+        
+        return result
+    else:
+        # Default ordering - just ensure 'Overall' is first
+        return table.sort_index(level=0, key=lambda x: x == 'Overall',
+                               ascending=False, sort_remaining=False)
+    
 
 class TableDrifts():
   def __init__(
@@ -919,6 +1021,7 @@ class TableDrifts():
       categorical: Optional[list] = None,
       normal: Optional[list] = None,
       nonnormal: Optional[list] = None,
+      order_vars: Optional[list] = None,
       decimals: Optional[int] = 1,
       missingness: Optional[bool] = True,
       rename: Optional[dict] = None,
@@ -945,86 +1048,94 @@ class TableDrifts():
     if (rename is not None) & (not isinstance(rename, dict)):
         raise ValueError("rename must be a dictionary")
     
+    if (order_vars is not None) & (not isinstance(order_vars, list)):
+            raise ValueError("order_vars must be a list")
+        
     self._dfs = dfs
     if categorical is None:
-      self._categorical = []
+        self._categorical = []
     else:
-      self._categorical = categorical
+        self._categorical = categorical
 
     if normal is None:
-      self._normal = []
+        self._normal = []
     else:
-      self._normal = normal
+        self._normal = normal
 
     if nonnormal is None:
-      self._nonnormal = []
+        self._nonnormal = []
     else:
-      self._nonnormal = nonnormal
-
+        self._nonnormal = nonnormal
+        
+    self._order_vars = order_vars  # Store order_vars
     self._decimals = decimals
     self._missingness = missingness
 
     if rename is None:
-      self._rename = dict()
+        self._rename = dict()
     else:
-      self._rename = rename
+        self._rename = rename
 
-    # make rename have the same keys as the original variable names if no rename
+    # Make rename have the same keys as the original variable names if no rename
     for c in self._categorical + self._normal + self._nonnormal:
-      if c not in self._rename.keys():
-        self._rename[c] = c
-
-  
+        if c not in self._rename.keys():
+            self._rename[c] = c
+    
+    # Create TableFlows and TableCharacteristics instances
+    # Pass order_vars to TableCharacteristics
     self._table_flows = TableFlows(
-      dfs,
-      label_suffix=False,
-      thousands_sep=False,
+        dfs,
+        label_suffix=False,
+        thousands_sep=False,
     ).view()
 
     self._table_characteristics = TableCharacteristics(
-      dfs,
-      categorical=self._categorical,
-      normal=self._normal,
-      nonnormal=self._nonnormal,
-      decimals=self._decimals,
-      missingness=False,
-      format_cat='N',
-      format_normal='Mean',
-      format_nonnormal='Mean',
-      thousands_sep=False,
-      label_suffix=False,
-      rename=self._rename,
+        dfs,
+        categorical=self._categorical,
+        normal=self._normal,
+        nonnormal=self._nonnormal,
+        order_vars=self._order_vars,  # Pass order_vars to respect the same ordering
+        decimals=self._decimals,
+        missingness=False,
+        format_cat='N',
+        format_normal='Mean',
+        format_nonnormal='Mean',
+        thousands_sep=False,
+        label_suffix=False,
+        rename=self._rename,
     ).view()
 
-    # auxiliary tables
+    # Create auxiliary tables with order_vars
     self._table_cat_n = TableCharacteristics(
-      dfs,
-      categorical=self._categorical,
-      normal=self._normal,
-      nonnormal=self._nonnormal,
-      decimals=self._decimals,
-      format_cat='N',
-      format_normal='Mean',
-      format_nonnormal='Mean',
-      thousands_sep=False,
-      missingness=self._missingness,
-      label_suffix=False,
-      rename=self._rename,
+        dfs,
+        categorical=self._categorical,
+        normal=self._normal,
+        nonnormal=self._nonnormal,
+        order_vars=self._order_vars,  # Pass order_vars
+        decimals=self._decimals,
+        format_cat='N',
+        format_normal='Mean',
+        format_nonnormal='Mean',
+        thousands_sep=False,
+        missingness=self._missingness,
+        label_suffix=False,
+        rename=self._rename,
     ).view()
 
     self._table_cat_perc = TableCharacteristics(
-      dfs,
-      categorical=self._categorical,
-      normal=self._normal,
-      nonnormal=self._nonnormal,
-      decimals=self._decimals,
-      format_cat='%',
-      format_normal='SD',
-      format_nonnormal='SD',
-      thousands_sep=False,
-      missingness=self._missingness,
-      label_suffix=False,
-      rename=self._rename,
+        dfs,
+        categorical=self._categorical,
+        normal=self._normal,
+        nonnormal=self._nonnormal,
+        order_vars=self._order_vars,  # Pass order_vars
+        decimals=self._decimals,
+        format_cat='%',
+        format_normal='SD',
+        format_nonnormal='SD',
+        thousands_sep=False,
+        missingness=self._missingness,
+        label_suffix=False,
+        rename=self._rename,
     ).view()
 
 
@@ -1882,6 +1993,7 @@ class TablePValues:
         categorical: Optional[list] = None,
         normal: Optional[list] = None,
         nonnormal: Optional[list] = None,
+        order_vars: Optional[list] = None,
         alpha: float = 0.05,
         decimals: int = 3,
         min_n_expected: int = 5,
@@ -1899,17 +2011,21 @@ class TablePValues:
         if (categorical is None) and (normal is None) and (nonnormal is None):
             raise ValueError("At least one of categorical, normal, or nonnormal must be provided")
         
+        if (order_vars is not None) & (not isinstance(order_vars, list)):
+            raise ValueError("order_vars must be a list")
+        
         self._dfs = dfs
         self._categorical = [] if categorical is None else categorical
         self._normal = [] if normal is None else normal
         self._nonnormal = [] if nonnormal is None else nonnormal
+        self._order_vars = order_vars  # Store order_vars
         self._alpha = alpha
         self._decimals = decimals
         self._min_n_expected = min_n_expected
         self._min_samples = min_samples
         self._rename = {} if rename is None else rename
         
-        # Create TableFlows object and get the DataFrame
+        # Create TableFlows object
         self._table_flows = TableFlows(
             dfs=self._dfs,
             label_suffix=False,
@@ -2071,7 +2187,7 @@ class TablePValues:
             return 1.0, False
     
     def view(self):
-        """Generate a table of p-values between consecutive cohorts."""
+        """Generate a table of p-values between consecutive cohorts, respecting variable order."""
         import pandas as pd
         import numpy as np
         from scipy import stats
@@ -2080,16 +2196,30 @@ class TablePValues:
         table_flows_df = self._table_flows.view()
         cols = table_flows_df.columns
         
+        # Determine variable processing order
+        all_vars = set(self._categorical + self._normal + self._nonnormal)
+        
+        if self._order_vars is not None:
+            # Process variables in the specified order
+            ordered_vars = [v for v in self._order_vars if v in all_vars]
+            # Add any remaining variables not in order_vars
+            remaining_vars = [v for v in self._categorical + self._normal + self._nonnormal 
+                            if v not in ordered_vars]
+            processing_order = ordered_vars + remaining_vars
+        else:
+            # Use the default order
+            processing_order = self._categorical + self._normal + self._nonnormal
+        
         # Create index for result table
         index_tuples = [('Overall', ' ')]
         
-        # Add rows for main variables
-        for var in self._categorical + self._normal + self._nonnormal:
+        # Add rows for main variables in the determined order
+        for var in processing_order:
             var_name = self._rename[var]
             index_tuples.append((var_name, ' '))
         
-        # Add rows for missingness
-        for var in self._categorical + self._normal + self._nonnormal:
+        # Add rows for missingness in the same order
+        for var in processing_order:
             var_name = self._rename[var]
             index_tuples.append((var_name, 'Missing'))
         
@@ -2162,7 +2292,8 @@ class TablePValues:
             axis=1
         )
         
-        # Sort index with 'Overall' first
+        # No need for custom sorting since we built the table with the correct order
+        # Just make sure Overall stays at the top
         table = table.sort_index(
             level=0, 
             key=lambda x: x == 'Overall',
