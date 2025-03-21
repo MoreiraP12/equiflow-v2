@@ -12,6 +12,8 @@ import graphviz
 
 
 class EquiFlow:
+
+
   def __init__(self,
                data: Optional[pd.DataFrame] = None,
                dfs: Optional[list] = None,
@@ -175,6 +177,7 @@ class EquiFlow:
   def view_table_flows(self, 
                        label_suffix: Optional[bool] = None,
                        thousands_sep: Optional[bool] = None) -> pd.DataFrame:
+    
     
     if len(self._dfs) < 2:
       raise ValueError("At least two cohorts must be provided. Please use add_exclusion() to add exclusions.")
@@ -383,6 +386,86 @@ class EquiFlow:
 
     self.flow_diagram.view()
 
+  def view_table_pvalues(self,
+                      categorical: Optional[list] = None,
+                      normal: Optional[list] = None,
+                      nonnormal: Optional[list] = None,
+                      alpha: Optional[float] = 0.05,
+                      decimals: Optional[int] = 3,
+                      min_n_expected: Optional[int] = 5,
+                      min_samples: Optional[int] = 30,
+                      rename: Optional[dict] = None) -> pd.DataFrame:
+    """
+    Generate a table of p-values between consecutive cohorts using appropriate statistical tests.
+    
+    Parameters
+    ----------
+    categorical : list, optional
+        List of categorical variable names
+    normal : list, optional
+        List of normally distributed continuous variable names
+    nonnormal : list, optional
+        List of non-normally distributed continuous variable names
+    alpha : float, optional
+        Significance level (default: 0.05)
+    decimals : int, optional
+        Number of decimal places for p-values (default: 3)
+    min_n_expected : int, optional
+        Minimum expected count for Chi-square validity (default: 5)
+    min_samples : int, optional
+        Threshold for small sample considerations (default: 30)
+    rename : dict, optional
+        Dictionary mapping original variable names to display names
+        
+    Returns
+    -------
+    pd.DataFrame
+        Table of p-values between consecutive cohorts
+    
+    Notes
+    -----
+    Statistical tests used:
+    - Categorical variables: Chi-squared test (or Fisher's exact for small samples)
+    - Normal continuous variables: Two-sample t-test (or One-Way ANOVA for small samples)
+    - Non-normal continuous variables: Kruskal-Wallis test
+    
+    P-values are marked with:
+    - * for p < 0.05
+    - ** for p < 0.01
+    - *** for p < 0.001
+    - † for tests with small sample considerations
+    """
+    if len(self._dfs) < 2:
+        raise ValueError("At least two cohorts must be provided. Please use add_exclusion() to add exclusions")
+    
+    if categorical is None:
+        categorical = self.categorical
+    
+    if normal is None:
+        normal = self.normal
+    
+    if nonnormal is None:
+        nonnormal = self.nonnormal
+    
+    if decimals is None:
+        decimals = self.decimals
+    
+    if rename is None:
+        rename = self.rename
+    
+    self.table_pvalues = TablePValues(
+        dfs=self._dfs,
+        categorical=categorical,
+        normal=normal,
+        nonnormal=nonnormal,
+        alpha=alpha,
+        decimals=decimals,
+        min_n_expected=min_n_expected,
+        min_samples=min_samples,
+        rename=rename,
+    )
+    
+    return self.table_pvalues.view()
 
 
 class TableFlows:
@@ -1791,3 +1874,323 @@ class EasyFlow:
         flow.generate(output=output)
         
         return flow
+
+class TablePValues:
+    def __init__(
+        self,
+        dfs: list,
+        categorical: Optional[list] = None,
+        normal: Optional[list] = None,
+        nonnormal: Optional[list] = None,
+        alpha: float = 0.05,
+        decimals: int = 3,
+        min_n_expected: int = 5,
+        min_samples: int = 30,
+        rename: Optional[dict] = None
+    ) -> None:
+        """
+        Calculate p-values between cohorts using appropriate statistical tests.
+        """
+        from scipy import stats
+        
+        if not isinstance(dfs, list) or len(dfs) < 2:
+            raise ValueError("dfs must be a list with length ≥ 2")
+        
+        if (categorical is None) and (normal is None) and (nonnormal is None):
+            raise ValueError("At least one of categorical, normal, or nonnormal must be provided")
+        
+        self._dfs = dfs
+        self._categorical = [] if categorical is None else categorical
+        self._normal = [] if normal is None else normal
+        self._nonnormal = [] if nonnormal is None else nonnormal
+        self._alpha = alpha
+        self._decimals = decimals
+        self._min_n_expected = min_n_expected
+        self._min_samples = min_samples
+        self._rename = {} if rename is None else rename
+        
+        # Create TableFlows object and get the DataFrame
+        self._table_flows = TableFlows(
+            dfs=self._dfs,
+            label_suffix=False,
+            thousands_sep=False,
+        )
+        
+        # Make rename dict have the same keys as the original variable names if no rename
+        for c in self._categorical + self._normal + self._nonnormal:
+            if c not in self._rename.keys():
+                self._rename[c] = c
+    
+    def _chi2_test(self, df1, df2, var):
+        """Perform Chi-squared test for categorical variables."""
+        from scipy import stats
+        import numpy as np
+        import pandas as pd
+        
+        # Check if we have enough non-missing values
+        if df1[var].dropna().empty or df2[var].dropna().empty:
+            return 1.0, False  # Return p=1.0 (no difference) if data is missing
+        
+        # Get all unique categories across both cohorts
+        all_values = pd.concat([df1[var].dropna(), df2[var].dropna()]).unique()
+        
+        if len(all_values) < 2:
+            return 1.0, False  # Return p=1.0 if there's only one category
+        
+        # Create contingency table
+        table = np.zeros((2, len(all_values)))
+        
+        for i, val in enumerate(all_values):
+            table[0, i] = (df1[var] == val).sum()
+            table[1, i] = (df2[var] == val).sum()
+        
+        # Check if the table is valid for chi-square
+        if np.any(table.sum(axis=0) == 0) or np.any(table.sum(axis=1) == 0):
+            return 1.0, False  # Return p=1.0 if any row or column sums to zero
+        
+        try:
+            # Check if expected counts are sufficient for Chi-square
+            chi2_valid = True
+            _, p, _, expected = stats.chi2_contingency(table, correction=True)
+            
+            if np.any(expected < self._min_n_expected):
+                chi2_valid = False
+                # Use Fisher's exact test for 2x2 tables
+                if len(all_values) == 2:
+                    try:
+                        _, p = stats.fisher_exact(table)
+                    except:
+                        p = 1.0  # Default to no difference if test fails
+                # For larger tables with small expected counts, chi-square is best we can do
+            
+            return p, chi2_valid
+        except Exception as e:
+            print(f"Error in chi2_test for {var}: {e}")
+            return 1.0, False
+    
+    def _t_test(self, df1, df2, var):
+        """Perform two-sample t-test for normally distributed variables."""
+        from scipy import stats
+        import numpy as np
+        import pandas as pd
+        
+        try:
+            # Convert data to numeric, coercing non-numeric values to NaN
+            vals1 = pd.to_numeric(df1[var], errors='coerce').dropna()
+            vals2 = pd.to_numeric(df2[var], errors='coerce').dropna()
+            
+            # Check if we have enough data
+            if len(vals1) < 2 or len(vals2) < 2:
+                return 1.0, False  # Return p=1.0 if not enough data
+            
+            # Check sample sizes
+            small_sample = len(vals1) < self._min_samples or len(vals2) < self._min_samples
+            
+            if small_sample:
+                # For small samples, use one-way ANOVA (equivalent to t-test for 2 groups)
+                f_stat, p = stats.f_oneway(vals1, vals2)
+            else:
+                # For larger samples, use two-sample t-test with Welch's correction
+                t_stat, p = stats.ttest_ind(vals1, vals2, equal_var=False)
+            
+            # Handle NaN p-value
+            if np.isnan(p):
+                return 1.0, False
+                
+            return p, small_sample
+        except Exception as e:
+            print(f"Error in t_test for {var}: {e}")
+            return 1.0, False
+    
+    def _kruskal_test(self, df1, df2, var):
+        """Perform Kruskal-Wallis test for non-normally distributed variables."""
+        from scipy import stats
+        import pandas as pd
+        import numpy as np
+        
+        try:
+            # Convert data to numeric, coercing non-numeric values to NaN
+            vals1 = pd.to_numeric(df1[var], errors='coerce').dropna()
+            vals2 = pd.to_numeric(df2[var], errors='coerce').dropna()
+            
+            # Check if we have enough data
+            if len(vals1) < 2 or len(vals2) < 2:
+                return 1.0, False
+            
+            # Kruskal-Wallis H-test (non-parametric test)
+            h_stat, p = stats.kruskal(vals1, vals2)
+            
+            # Handle NaN p-value
+            if np.isnan(p):
+                return 1.0, False
+                
+            return p, True
+        except Exception as e:
+            print(f"Error in kruskal_test for {var}: {e}")
+            return 1.0, False
+    
+    def _missingness_test(self, df1, df2, var):
+        """Test difference in missingness proportion between cohorts using custom Z-test."""
+        import numpy as np
+        from scipy import stats
+        
+        try:
+            # Calculate missing proportions
+            n1 = len(df1)
+            n2 = len(df2)
+            
+            if n1 == 0 or n2 == 0:
+                return 1.0, False
+            
+            p1 = df1[var].isna().mean()
+            p2 = df2[var].isna().mean()
+            
+            # If proportions are identical, no need for test
+            if p1 == p2:
+                return 1.0, True
+            
+            # Calculate pooled proportion
+            p_pooled = (p1 * n1 + p2 * n2) / (n1 + n2)
+            
+            # Calculate standard error
+            se = np.sqrt(p_pooled * (1 - p_pooled) * (1/n1 + 1/n2))
+            
+            # If standard error is 0, avoid division by zero
+            if se == 0:
+                return 1.0, False
+            
+            # Calculate Z statistic
+            z = (p1 - p2) / se
+            
+            # Calculate two-tailed p-value using normal distribution
+            p_value = 2 * (1 - stats.norm.cdf(abs(z)))
+            
+            return p_value, True
+        except Exception as e:
+            print(f"Error in missingness_test for {var}: {e}")
+            return 1.0, False
+    
+    def view(self):
+        """Generate a table of p-values between consecutive cohorts."""
+        import pandas as pd
+        import numpy as np
+        from scipy import stats
+        
+        # Get table flows as DataFrame
+        table_flows_df = self._table_flows.view()
+        cols = table_flows_df.columns
+        
+        # Create index for result table
+        index_tuples = [('Overall', ' ')]
+        
+        # Add rows for main variables
+        for var in self._categorical + self._normal + self._nonnormal:
+            var_name = self._rename[var]
+            index_tuples.append((var_name, ' '))
+        
+        # Add rows for missingness
+        for var in self._categorical + self._normal + self._nonnormal:
+            var_name = self._rename[var]
+            index_tuples.append((var_name, 'Missing'))
+        
+        # Create index and empty DataFrame
+        index = pd.MultiIndex.from_tuples(index_tuples, names=['Variable', 'Value'])
+        table = pd.DataFrame('', index=index, columns=cols)
+        
+        # Fill in p-values between consecutive cohorts
+        for col in cols:
+            # Extract cohort indices from column name (e.g., "0 to 1" -> 0, 1)
+            try:
+                from_cohort, to_cohort = map(int, col.split(' to '))
+                df1 = self._dfs[from_cohort]
+                df2 = self._dfs[to_cohort]
+                
+                # Calculate p-values for categorical variables
+                for var in self._categorical:
+                    try:
+                        # Main variable test
+                        p_value, valid = self._chi2_test(df1, df2, var)
+                        table.loc[(self._rename[var], ' '), col] = self._format_p_value(p_value, valid)
+                        
+                        # Missingness test
+                        miss_p, miss_valid = self._missingness_test(df1, df2, var)
+                        table.loc[(self._rename[var], 'Missing'), col] = self._format_p_value(miss_p, miss_valid)
+                    except Exception as e:
+                        print(f"Error processing {var}: {e}")
+                        table.loc[(self._rename[var], ' '), col] = 'ERROR'
+                        table.loc[(self._rename[var], 'Missing'), col] = 'ERROR'
+                
+                # Calculate p-values for normal variables
+                for var in self._normal:
+                    try:
+                        # Main variable test
+                        p_value, valid = self._t_test(df1, df2, var)
+                        table.loc[(self._rename[var], ' '), col] = self._format_p_value(p_value, valid)
+                        
+                        # Missingness test
+                        miss_p, miss_valid = self._missingness_test(df1, df2, var)
+                        table.loc[(self._rename[var], 'Missing'), col] = self._format_p_value(miss_p, miss_valid)
+                    except Exception as e:
+                        print(f"Error processing {var}: {e}")
+                        table.loc[(self._rename[var], ' '), col] = 'ERROR'
+                        table.loc[(self._rename[var], 'Missing'), col] = 'ERROR'
+                
+                # Calculate p-values for non-normal variables
+                for var in self._nonnormal:
+                    try:
+                        # Main variable test
+                        p_value, valid = self._kruskal_test(df1, df2, var)
+                        table.loc[(self._rename[var], ' '), col] = self._format_p_value(p_value, valid)
+                        
+                        # Missingness test
+                        miss_p, miss_valid = self._missingness_test(df1, df2, var)
+                        table.loc[(self._rename[var], 'Missing'), col] = self._format_p_value(miss_p, miss_valid)
+                    except Exception as e:
+                        print(f"Error processing {var}: {e}")
+                        table.loc[(self._rename[var], ' '), col] = 'ERROR'
+                        table.loc[(self._rename[var], 'Missing'), col] = 'ERROR'
+                        
+            except Exception as e:
+                print(f"Error processing column {col}: {e}")
+        
+        # Remove rows with all empty values
+        table = table.loc[~(table == '').all(axis=1)]
+        
+        # Add super header
+        table = table.set_axis(
+            pd.MultiIndex.from_product([['p-value'], table.columns]),
+            axis=1
+        )
+        
+        # Sort index with 'Overall' first
+        table = table.sort_index(
+            level=0, 
+            key=lambda x: x == 'Overall',
+            ascending=False, 
+            sort_remaining=False
+        )
+        
+        return table
+    
+    def _format_p_value(self, p_value, valid=True):
+        """Format p-value with appropriate symbols and significance indicators."""
+        import numpy as np
+        
+        # If p_value is nan or none, return empty string
+        if p_value is None or (isinstance(p_value, float) and np.isnan(p_value)):
+            return ''
+        
+        if not valid:
+            prefix = "†"  # Mark small sample sizes or invalid tests
+        else:
+            prefix = ""
+        
+        # Format the p-value
+        if p_value < 0.001:
+            return f"{prefix}<0.001***"
+        elif p_value < 0.01:
+            return f"{prefix}{p_value:.{self._decimals}f}**"
+        elif p_value < 0.05:
+            return f"{prefix}{p_value:.{self._decimals}f}*"
+        else:
+            return f"{prefix}{p_value:.{self._decimals}f}"
