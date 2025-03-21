@@ -21,7 +21,9 @@ class EquiFlow:
                 categorical: Optional[list] = None,
                 normal: Optional[list] = None,
                 nonnormal: Optional[list] = None,
-                order_vars: Optional[list] = None,  # New parameter
+                order_vars: Optional[list] = None,
+                order_classes: Optional[dict] = None,
+                limit: Optional[Union[int, dict]] = None,
                 decimals: Optional[int] = 1,
                 format_cat: Optional[str] = 'N (%)',
                 format_normal: Optional[str] = 'Mean ± SD',
@@ -66,7 +68,11 @@ class EquiFlow:
       rename : dict, optional
           Dictionary mapping variable names to display names.
       """
-      # Existing validation code here...
+      if (order_classes is not None) & (not isinstance(order_classes, dict)):
+        raise ValueError("order_classes must be a dictionary")
+    
+      if (limit is not None) & (not (isinstance(limit, int) or isinstance(limit, dict))):
+        raise ValueError("limit must be an integer or a dictionary")
       
       if (order_vars is not None) & (not isinstance(order_vars, list)):
           raise ValueError("order_vars must be a list")
@@ -84,7 +90,9 @@ class EquiFlow:
       self.categorical = categorical
       self.normal = normal
       self.nonnormal = nonnormal
-      self.order_vars = order_vars  # Store the order_vars
+      self.order_vars = order_vars
+      self.order_classes = order_classes 
+      self.limit = limit
       self.decimals = decimals
       self.format_cat = format_cat
       self.format_normal = format_normal
@@ -189,7 +197,9 @@ class EquiFlow:
                                  categorical: Optional[list] = None,
                                  normal: Optional[list] = None,
                                  nonnormal: Optional[list] = None,
-                                 order_vars: Optional[list] = None,  # New parameter
+                                 order_vars: Optional[list] = None,
+                                 order_classes: Optional[dict] = None,  
+                                 limit: Optional[Union[int, dict]] = None,
                                  decimals: Optional[int] = None,
                                  format_cat: Optional[str] = None,
                                  format_normal: Optional[str] = None,
@@ -273,12 +283,21 @@ class EquiFlow:
         if rename is None:
             rename = self.rename
 
+        if order_classes is None:
+            order_classes = self.order_classes
+            
+        if limit is None:
+            limit = self.limit
+    
+
         self.table_characteristics = TableCharacteristics(
             dfs=self._dfs,
             categorical=categorical,
             normal=normal,
             nonnormal=nonnormal,
-            order_vars=order_vars,  # Pass order_vars to TableCharacteristics
+            order_vars=order_vars,
+            order_classes=order_classes, 
+            limit=limit,
             decimals=decimals,
             format_cat=format_cat,
             format_normal=format_normal,
@@ -288,163 +307,198 @@ class EquiFlow:
             label_suffix=label_suffix,
             rename=rename,
         )
-
+        
         return self.table_characteristics.view()
     
   def view_table_drifts(self,
-                      drifts_by_class: Optional[bool] = False,
+                    drifts_by_class: Optional[bool] = False,
+                    categorical: Optional[list] = None,
+                    normal: Optional[list] = None,
+                    nonnormal: Optional[list] = None,
+                    order_vars: Optional[list] = None,
+                    limit: Optional[Union[int, dict]] = None,  # New parameter
+                    order_classes: Optional[dict] = None,  # New parameter
+                    decimals: Optional[int] = None,
+                    missingness: Optional[bool] = None,
+                    rename: Optional[dict] = None) -> pd.DataFrame:
+    """
+    Generate a table of standardized mean differences (drifts).
+    
+    Parameters
+    ----------
+    drifts_by_class : bool, default=False
+        Whether to calculate drifts by variable class instead of individual values.
+    categorical : list, optional
+        List of categorical variable names.
+    normal : list, optional
+        List of normally distributed continuous variable names.
+    nonnormal : list, optional
+        List of non-normally distributed continuous variable names.
+    order_vars : list, optional
+        List of variable names in the desired display order. Variables not listed
+        will be displayed after the ordered ones, in their original order.
+    limit : int or dict, optional
+        Maximum number of classes to display for categorical variables. Can be an
+        integer to apply to all variables or a dictionary mapping variable names to
+        individual limits. For binary variables, use limit=1 to show only one class.
+    order_classes : dict, optional
+        Dictionary mapping variable names to lists specifying the order of classes.
+        For example, {'race': ['White', 'Black', 'Asian', 'Other']} will display
+        race categories in that order.
+    decimals : int, optional
+        Number of decimal places for rounding.
+    missingness : bool, optional
+        Whether to include missingness information.
+    rename : dict, optional
+        Dictionary mapping variable names to display names.
+        
+    Returns
+    -------
+    pd.DataFrame
+        Table of standardized mean differences between cohorts
+    """
+    if len(self._dfs) < 2:
+        raise ValueError("At least two cohorts must be provided. Please use add_exclusion() to add exclusions")
+
+    if categorical is None:
+        categorical = self.categorical
+
+    if normal is None:
+        normal = self.normal
+
+    if nonnormal is None:
+        nonnormal = self.nonnormal
+        
+    if order_vars is None:
+        order_vars = self.order_vars
+        
+    if limit is None:
+        limit = self.limit
+        
+    if order_classes is None:
+        order_classes = self.order_classes
+
+    if decimals is None:
+        decimals = self.decimals
+
+    if missingness is None:
+        missingness = self.missingness
+
+    if rename is None:
+        rename = self.rename
+
+    self.table_drifts = TableDrifts(
+        dfs=self._dfs,
+        categorical=categorical,
+        normal=normal,
+        nonnormal=nonnormal,
+        order_vars=order_vars,
+        limit=limit,  # Pass limit parameter
+        order_classes=order_classes,  # Pass order_classes parameter
+        decimals=decimals,
+        missingness=missingness,
+        rename=rename,
+    )
+
+    if drifts_by_class:
+        return self.table_drifts.view_simple()
+    
+    else:
+        return self.table_drifts.view()
+  
+  def view_table_pvalues(self,
                       categorical: Optional[list] = None,
                       normal: Optional[list] = None,
                       nonnormal: Optional[list] = None,
-                      order_vars: Optional[list] = None,  # New parameter
-                      decimals: Optional[int] = None,
-                      missingness: Optional[bool] = None,
+                      order_vars: Optional[list] = None,
+                      limit: Optional[Union[int, dict]] = None,  # New parameter
+                      order_classes: Optional[dict] = None,  # New parameter
+                      alpha: Optional[float] = 0.05,
+                      decimals: Optional[int] = 3,
+                      min_n_expected: Optional[int] = 5,
+                      min_samples: Optional[int] = 30,
                       rename: Optional[dict] = None) -> pd.DataFrame:
-      """
-      Generate a table of standardized mean differences (drifts).
-      
-      Parameters
-      ----------
-      drifts_by_class : bool, default=False
-          Whether to calculate drifts by variable class instead of individual values.
-      categorical : list, optional
-          List of categorical variable names.
-      normal : list, optional
-          List of normally distributed continuous variable names.
-      nonnormal : list, optional
-          List of non-normally distributed continuous variable names.
-      order_vars : list, optional
-          List of variable names in the desired display order. Variables not listed
-          will be displayed after the ordered ones, in their original order.
-      decimals : int, optional
-          Number of decimal places for rounding.
-      missingness : bool, optional
-          Whether to include missingness information.
-      rename : dict, optional
-          Dictionary mapping variable names to display names.
-          
-      Returns
-      -------
-      pd.DataFrame
-          Table of standardized mean differences between cohorts
-      """
-      if len(self._dfs) < 2:
-          raise ValueError("At least two cohorts must be provided. Please use add_exclusion() to add exclusions")
-
-      if categorical is None:
-          categorical = self.categorical
-
-      if normal is None:
-          normal = self.normal
-
-      if nonnormal is None:
-          nonnormal = self.nonnormal
-          
-      if order_vars is None:
-          order_vars = self.order_vars
-
-      if decimals is None:
-          decimals = self.decimals
-
-      if missingness is None:
-          missingness = self.missingness
-
-      if rename is None:
-          rename = self.rename
-
-      self.table_drifts = TableDrifts(
-          dfs=self._dfs,
-          categorical=categorical,
-          normal=normal,
-          nonnormal=nonnormal,
-          order_vars=order_vars,  # Pass order_vars to TableDrifts
-          decimals=decimals,
-          missingness=missingness,
-          rename=rename,
-      )
-
-      if drifts_by_class:
-          return self.table_drifts.view_simple()
-      
-      else:
-          return self.table_drifts.view()
-  
-  def view_table_pvalues(self,
-                        categorical: Optional[list] = None,
-                        normal: Optional[list] = None,
-                        nonnormal: Optional[list] = None,
-                        order_vars: Optional[list] = None,  # New parameter
-                        alpha: Optional[float] = 0.05,
-                        decimals: Optional[int] = 3,
-                        min_n_expected: Optional[int] = 5,
-                        min_samples: Optional[int] = 30,
-                        rename: Optional[dict] = None) -> pd.DataFrame:
-      """
-      Generate a table of p-values between consecutive cohorts using appropriate statistical tests.
-      
-      Parameters
-      ----------
-      categorical : list, optional
-          List of categorical variable names
-      normal : list, optional
-          List of normally distributed continuous variable names
-      nonnormal : list, optional
-          List of non-normally distributed continuous variable names
-      order_vars : list, optional
-          List of variable names in the desired display order. Variables not listed
-          will be displayed after the ordered ones, in their original order.
-      alpha : float, optional
-          Significance level (default: 0.05)
-      decimals : int, optional
-          Number of decimal places for p-values (default: 3)
-      min_n_expected : int, optional
-          Minimum expected count for Chi-square validity (default: 5)
-      min_samples : int, optional
-          Threshold for small sample considerations (default: 30)
-      rename : dict, optional
-          Dictionary mapping original variable names to display names
-          
-      Returns
-      -------
-      pd.DataFrame
-          Table of p-values between consecutive cohorts
-      """
-      if len(self._dfs) < 2:
-          raise ValueError("At least two cohorts must be provided. Please use add_exclusion() to add exclusions")
-      
-      if categorical is None:
-          categorical = self.categorical
-      
-      if normal is None:
-          normal = self.normal
-      
-      if nonnormal is None:
-          nonnormal = self.nonnormal
-          
-      if order_vars is None:
-          order_vars = self.order_vars
-      
-      if decimals is None:
-          decimals = self.decimals
-      
-      if rename is None:
-          rename = self.rename
-      
-      self.table_pvalues = TablePValues(
-          dfs=self._dfs,
-          categorical=categorical,
-          normal=normal,
-          nonnormal=nonnormal,
-          order_vars=order_vars,  # Pass order_vars to TablePValues
-          alpha=alpha,
-          decimals=decimals,
-          min_n_expected=min_n_expected,
-          min_samples=min_samples,
-          rename=rename,
-      )
-      
-      return self.table_pvalues.view()
-
+    """
+    Generate a table of p-values between consecutive cohorts using appropriate statistical tests.
+    
+    Parameters
+    ----------
+    categorical : list, optional
+        List of categorical variable names
+    normal : list, optional
+        List of normally distributed continuous variable names
+    nonnormal : list, optional
+        List of non-normally distributed continuous variable names
+    order_vars : list, optional
+        List of variable names in the desired display order. Variables not listed
+        will be displayed after the ordered ones, in their original order.
+    limit : int or dict, optional
+        Maximum number of classes to display for categorical variables. Can be an
+        integer to apply to all variables or a dictionary mapping variable names to
+        individual limits. For binary variables, use limit=1 to show only one class.
+    order_classes : dict, optional
+        Dictionary mapping variable names to lists specifying the order of classes.
+        For example, {'race': ['White', 'Black', 'Asian', 'Other']} will display
+        race categories in that order.
+    alpha : float, optional
+        Significance level (default: 0.05)
+    decimals : int, optional
+        Number of decimal places for p-values (default: 3)
+    min_n_expected : int, optional
+        Minimum expected count for Chi-square validity (default: 5)
+    min_samples : int, optional
+        Threshold for small sample considerations (default: 30)
+    rename : dict, optional
+        Dictionary mapping original variable names to display names
+        
+    Returns
+    -------
+    pd.DataFrame
+        Table of p-values between consecutive cohorts
+    """
+    if len(self._dfs) < 2:
+        raise ValueError("At least two cohorts must be provided. Please use add_exclusion() to add exclusions")
+    
+    if categorical is None:
+        categorical = self.categorical
+    
+    if normal is None:
+        normal = self.normal
+    
+    if nonnormal is None:
+        nonnormal = self.nonnormal
+        
+    if order_vars is None:
+        order_vars = self.order_vars
+        
+    if limit is None:
+        limit = self.limit
+        
+    if order_classes is None:
+        order_classes = self.order_classes
+    
+    if decimals is None:
+        decimals = self.decimals
+    
+    if rename is None:
+        rename = self.rename
+    
+    self.table_pvalues = TablePValues(
+        dfs=self._dfs,
+        categorical=categorical,
+        normal=normal,
+        nonnormal=nonnormal,
+        order_vars=order_vars,
+        limit=limit,  # Pass limit parameter
+        order_classes=order_classes,  # Pass order_classes parameter
+        alpha=alpha,
+        decimals=decimals,
+        min_n_expected=min_n_expected,
+        min_samples=min_samples,
+        rename=rename,
+    )
+    
+    return self.table_pvalues.view()
   
 
   def plot_flows(self,
@@ -598,6 +652,8 @@ class TableCharacteristics:
       normal: Optional[list] = None,
       nonnormal: Optional[list] = None,
       order_vars: Optional[list] = None, 
+      limit: Optional[Union[int, dict]] = None,  # New parameter
+      order_classes: Optional[dict] = None,  # New parameter
       decimals: Optional[int] = 1,
       format_cat: Optional[str] = 'N (%)',
       format_normal: Optional[str] = 'Mean ± SD',
@@ -645,7 +701,13 @@ class TableCharacteristics:
         raise ValueError("label_suffix must be a boolean")
     
     if (order_vars is not None) & (not isinstance(order_vars, list)):
-            raise ValueError("order_vars must be a list")
+        raise ValueError("order_vars must be a list")
+        
+    if (limit is not None) & (not (isinstance(limit, int) or isinstance(limit, dict))):
+        raise ValueError("limit must be an integer or a dictionary")
+        
+    if (order_classes is not None) & (not isinstance(order_classes, dict)):
+        raise ValueError("order_classes must be a dictionary")
         
     self._dfs = dfs
 
@@ -664,7 +726,9 @@ class TableCharacteristics:
     else:
         self._nonnormal = nonnormal
         
-    self._order_vars = order_vars 
+    self._order_vars = order_vars
+    self._limit = limit  # Store the limit
+    self._order_classes = order_classes  # Store the order_classes
     self._decimals = decimals
     self._missingness = missingness
     self._format_cat = format_cat
@@ -891,7 +955,7 @@ class TableCharacteristics:
     """Generate and return the characteristic table with variables in the specified order."""
     table = pd.DataFrame()
 
-    # get the unique values, before any exclusion, for categorical variables
+    # Get the unique values, before any exclusion, for categorical variables
     original_uniques = self._get_original_uniques(self._categorical)
     
     # Process each cohort
@@ -901,34 +965,35 @@ class TableCharacteristics:
         
         # Function to process each variable
         def process_variable(col, var_type):
-            nonlocal df_dists
-            
-            if var_type == 'categorical':
-                counts = self._my_value_counts(df, original_uniques, col)
-                melted_counts = pd.melt(counts.reset_index(), id_vars=['index']) \
-                                  .set_index(['variable', 'index'])
-                df_dists = pd.concat([df_dists, melted_counts], axis=0)
-            elif var_type == 'normal':
-                df_dists = self._normal_vars_dist(df, col, df_dists)
-            elif var_type == 'nonnormal':
-                df_dists = self._nonnormal_vars_dist(df, col, df_dists)
-            
-            # Add missing counts if requested
-            if self._missingness:
-                df_dists = self._add_missing_counts(df, col, df_dists)
-            
-            # Rename if applicable
-            if col in self._rename.keys():
-                col, df_dists = self._rename_columns(df_dists, col)
-            
-            # Add suffix if requested
-            if self._label_suffix:
-                if var_type == 'categorical':
-                    df_dists = self._add_label_suffix(col, df_dists, ', ' + self._format_cat)
-                elif var_type == 'normal':
-                    df_dists = self._add_label_suffix(col, df_dists, ', ' + self._format_normal)
-                elif var_type == 'nonnormal':
-                    df_dists = self._add_label_suffix(col, df_dists, ', ' + self._format_nonnormal)
+          nonlocal df_dists
+          
+          if var_type == 'categorical':
+              counts = self._my_value_counts(df, original_uniques, col)
+              melted_counts = pd.melt(counts.reset_index(), id_vars=['index']) \
+                                .set_index(['variable', 'index'])
+              df_dists = pd.concat([df_dists, melted_counts], axis=0)
+          elif var_type == 'normal':
+              df_dists = self._normal_vars_dist(df, col, df_dists)
+          elif var_type == 'nonnormal':
+              df_dists = self._nonnormal_vars_dist(df, col, df_dists)
+          
+          # Add missing counts if requested
+          if self._missingness:
+              df_dists = self._add_missing_counts(df, col, df_dists)
+          
+          # Rename if applicable
+          if col in self._rename.keys():
+              col, df_dists = self._rename_columns(df_dists, col)
+          
+          # Add suffix if requested
+          if self._label_suffix:
+              if var_type == 'categorical':
+                  df_dists = self._add_label_suffix(col, df_dists, ', ' + self._format_cat)
+              elif var_type == 'normal':
+                  df_dists = self._add_label_suffix(col, df_dists, ', ' + self._format_normal)
+              elif var_type == 'nonnormal':
+                  df_dists = self._add_label_suffix(col, df_dists, ', ' + self._format_nonnormal)
+      
         
         # Determine variable processing order
         all_vars = set(self._categorical + self._normal + self._nonnormal)
@@ -962,57 +1027,164 @@ class TableCharacteristics:
     
     # Add super header
     table = table.set_axis(
-        pd.MultiIndex.from_product([['Cohort'], table.columns]),
-        axis=1)
-    
+          pd.MultiIndex.from_product([['Cohort'], table.columns]),
+          axis=1)
+      
     # Rename indexes
     table.index.names = ['Variable', 'Value']
     
-    # Handle ordering while preserving MultiIndex structure
+    # Create mapping from display names to original names
+    # This will help with handling order_classes and limit
+    display_to_orig = {}
+    for var in self._categorical + self._normal + self._nonnormal:
+        display_name = var
+        if var in self._rename:
+            display_name = self._rename[var]
+        
+        if self._label_suffix:
+            if var in self._categorical:
+                display_name = display_name + ', ' + self._format_cat
+            elif var in self._normal:
+                display_name = display_name + ', ' + self._format_normal
+            elif var in self._nonnormal:
+                display_name = display_name + ', ' + self._format_nonnormal
+        
+        display_to_orig[display_name] = var
+    
+    # Apply order_classes parameter to control the order of categorical values
+    if self._order_classes is not None:
+        for var_orig, class_order in self._order_classes.items():
+            # Find the display name for this variable
+            var_display = None
+            for display_name, orig_name in display_to_orig.items():
+                if orig_name == var_orig:
+                    var_display = display_name
+                    break
+            
+            if var_display is not None and var_display in table.index.get_level_values(0):
+                # Get all rows for this variable
+                mask = table.index.get_level_values(0) == var_display
+                var_rows = table.loc[mask]
+                
+                # Process class ordering
+                var_values = list(var_rows.index.get_level_values(1))
+                
+                # Keep missing at the end if present
+                missing_present = 'Missing' in var_values
+                if missing_present:
+                    var_values.remove('Missing')
+                
+                # Create a custom sort key function
+                def get_order_key(value):
+                    if value in class_order:
+                        return class_order.index(value)
+                    else:
+                        # Put values not in class_order at the end
+                        return len(class_order) + var_values.index(value)
+                
+                # Sort the values according to the order_classes
+                ordered_values = sorted(var_values, key=get_order_key)
+                
+                # Add Missing back at the end if it was present
+                if missing_present:
+                    ordered_values.append('Missing')
+                
+                # Create a new index with the ordered values
+                ordered_idx = [(var_display, val) for val in ordered_values]
+                
+                # Reindex only this variable's rows
+                var_ordered_rows = var_rows.reindex(ordered_idx)
+                
+                # Update the table
+                table = table.drop(var_rows.index)
+                table = pd.concat([table, var_ordered_rows])
+    
+    # Apply limit parameter to restrict number of classes displayed
+    if self._limit is not None:
+        # Process each categorical variable
+        for var_orig in self._categorical:
+            # Find the display name for this variable
+            var_display = None
+            for display_name, orig_name in display_to_orig.items():
+                if orig_name == var_orig:
+                    var_display = display_name
+                    break
+            
+            if var_display is not None and var_display in table.index.get_level_values(0):
+                # Determine the limit for this variable
+                var_limit = None
+                if isinstance(self._limit, int):
+                    var_limit = self._limit
+                elif isinstance(self._limit, dict):
+                    if var_orig in self._limit:
+                        var_limit = self._limit[var_orig]
+                    elif var_display in self._limit:
+                        var_limit = self._limit[var_display]
+                
+                if var_limit is not None:
+                    # Get all rows for this variable
+                    mask = table.index.get_level_values(0) == var_display
+                    var_rows = table.loc[mask]
+                    
+                    # Get all non-missing values
+                    non_missing_mask = var_rows.index.get_level_values(1) != 'Missing'
+                    non_missing_rows = var_rows.loc[non_missing_mask]
+                    
+                    # Get missing row if it exists
+                    missing_mask = var_rows.index.get_level_values(1) == 'Missing'
+                    missing_rows = var_rows.loc[missing_mask]
+                    
+                    # Only apply limit if we have more non-missing values than the limit
+                    if len(non_missing_rows) > var_limit:
+                        # Keep only the first var_limit rows
+                        limited_rows = non_missing_rows.iloc[:var_limit]
+                        
+                        # Add back the missing row if it exists
+                        if not missing_rows.empty:
+                            limited_rows = pd.concat([limited_rows, missing_rows])
+                        
+                        # Update the table
+                        table = table.drop(var_rows.index)
+                        table = pd.concat([table, limited_rows])
+    
+    # Handle sorting of variables
     if self._order_vars is not None:
         # Move 'Overall' to the top
         overall_mask = table.index.get_level_values(0) == 'Overall'
-        overall_rows = table[overall_mask]
-        non_overall_rows = table[~overall_mask]
+        overall_rows = table.loc[overall_mask]
+        non_overall_rows = table.loc[~overall_mask]
         
-        # Create mappings for sorting
-        rename_inverse = {v: k for k, v in self._rename.items()}
-        var_order = {var: idx for idx, var in enumerate(self._order_vars)}
-        
-        # Get unique variable names (level 0 of index)
-        var_names = non_overall_rows.index.get_level_values(0).unique()
-        
-        # Helper function to get sort key for each variable
+        # Create sort key function for variable names
         def get_var_sort_key(var_name):
-            # Strip suffix if present
-            base_name = var_name.split(',')[0].strip() if isinstance(var_name, str) and ',' in var_name else var_name
-            # Get original name (before renaming)
-            orig_name = rename_inverse.get(base_name, base_name)
-            # Determine position
-            if orig_name in var_order:
-                return (0, var_order[orig_name])
+            # Get original name if possible
+            orig_name = display_to_orig.get(var_name, var_name)
+            
+            if orig_name in self._order_vars:
+                return (0, self._order_vars.index(orig_name))
             else:
-                return (1, base_name)
+                return (1, var_name)
         
-        # Sort variable names
-        sorted_var_names = sorted(var_names, key=get_var_sort_key)
+        # Get unique variable names and sort them
+        var_names = sorted(non_overall_rows.index.get_level_values(0).unique(),
+                          key=get_var_sort_key)
         
-        # Create new sorted table
+        # Reconstruct table in the sorted order
         result = pd.DataFrame()
+        
+        # Add 'Overall' at the top
         if not overall_rows.empty:
             result = pd.concat([result, overall_rows])
         
-        # Add each variable's rows in the sorted order
-        for var in sorted_var_names:
-            var_data = non_overall_rows.xs(var, level=0, drop_level=False)
-            result = pd.concat([result, var_data])
+        # Add each variable in sorted order
+        for var in var_names:
+            var_mask = non_overall_rows.index.get_level_values(0) == var
+            result = pd.concat([result, non_overall_rows.loc[var_mask]])
         
         return result
     else:
-        # Default ordering - just ensure 'Overall' is first
+        # Default sorting - ensure 'Overall' is at the top
         return table.sort_index(level=0, key=lambda x: x == 'Overall',
-                               ascending=False, sort_remaining=False)
-    
+                              ascending=False, sort_remaining=False)
 
 class TableDrifts():
   def __init__(
@@ -1022,6 +1194,8 @@ class TableDrifts():
       normal: Optional[list] = None,
       nonnormal: Optional[list] = None,
       order_vars: Optional[list] = None,
+      limit: Optional[Union[int, dict]] = None, 
+      order_classes: Optional[dict] = None,  
       decimals: Optional[int] = 1,
       missingness: Optional[bool] = True,
       rename: Optional[dict] = None,
@@ -1050,6 +1224,12 @@ class TableDrifts():
     
     if (order_vars is not None) & (not isinstance(order_vars, list)):
             raise ValueError("order_vars must be a list")
+    
+    if (limit is not None) & (not (isinstance(limit, int) or isinstance(limit, dict))):
+        raise ValueError("limit must be an integer or a dictionary")
+        
+    if (order_classes is not None) & (not isinstance(order_classes, dict)):
+        raise ValueError("order_classes must be a dictionary")
         
     self._dfs = dfs
     if categorical is None:
@@ -1066,8 +1246,10 @@ class TableDrifts():
         self._nonnormal = []
     else:
         self._nonnormal = nonnormal
-        
-    self._order_vars = order_vars  # Store order_vars
+
+    self._limit = limit 
+    self._order_classes = order_classes 
+    self._order_vars = order_vars  
     self._decimals = decimals
     self._missingness = missingness
 
@@ -1094,7 +1276,9 @@ class TableDrifts():
         categorical=self._categorical,
         normal=self._normal,
         nonnormal=self._nonnormal,
-        order_vars=self._order_vars,  # Pass order_vars to respect the same ordering
+        order_vars=self._order_vars,
+        limit=self._limit,  # Pass limit
+        order_classes=self._order_classes,  # Pass order_classes
         decimals=self._decimals,
         missingness=False,
         format_cat='N',
@@ -1105,13 +1289,15 @@ class TableDrifts():
         rename=self._rename,
     ).view()
 
-    # Create auxiliary tables with order_vars
+    # Create auxiliary tables with order_vars and new parameters
     self._table_cat_n = TableCharacteristics(
         dfs,
         categorical=self._categorical,
         normal=self._normal,
         nonnormal=self._nonnormal,
-        order_vars=self._order_vars,  # Pass order_vars
+        order_vars=self._order_vars,
+        limit=self._limit,  # Pass limit
+        order_classes=self._order_classes,  # Pass order_classes
         decimals=self._decimals,
         format_cat='N',
         format_normal='Mean',
@@ -1994,6 +2180,8 @@ class TablePValues:
         normal: Optional[list] = None,
         nonnormal: Optional[list] = None,
         order_vars: Optional[list] = None,
+        limit: Optional[Union[int, dict]] = None,  # New parameter
+        order_classes: Optional[dict] = None,  # New parameter
         alpha: float = 0.05,
         decimals: int = 3,
         min_n_expected: int = 5,
@@ -2014,16 +2202,25 @@ class TablePValues:
         if (order_vars is not None) & (not isinstance(order_vars, list)):
             raise ValueError("order_vars must be a list")
         
+        if (limit is not None) & (not (isinstance(limit, int) or isinstance(limit, dict))):
+            raise ValueError("limit must be an integer or a dictionary")
+            
+        if (order_classes is not None) & (not isinstance(order_classes, dict)):
+            raise ValueError("order_classes must be a dictionary")
+        
         self._dfs = dfs
         self._categorical = [] if categorical is None else categorical
         self._normal = [] if normal is None else normal
         self._nonnormal = [] if nonnormal is None else nonnormal
         self._order_vars = order_vars  # Store order_vars
+        self._limit = limit  
+        self._order_classes = order_classes  
         self._alpha = alpha
         self._decimals = decimals
         self._min_n_expected = min_n_expected
         self._min_samples = min_samples
         self._rename = {} if rename is None else rename
+      
         
         # Create TableFlows object
         self._table_flows = TableFlows(
