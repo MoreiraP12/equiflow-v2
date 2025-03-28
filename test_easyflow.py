@@ -463,7 +463,7 @@ data['bmi'] = data['bmi'].clip(15, 50).round(1)
 data['los_days'] = data['los_days'].clip(1, 30).round(1)
 data['cost'] = data['cost'].clip(1000, 100000).round(-2)
 
-""" # Method 1: Using the fluent interface
+# Method 1: Using the fluent interface
 print("Creating flow diagram using the fluent interface...")
 flow = (EasyFlow(data, title="Patient Selection")
     .categorize(["gender", "race"])
@@ -474,8 +474,8 @@ flow = (EasyFlow(data, title="Patient Selection")
     .exclude(data["missing_data"] == True, "Removed records with missing data")
     .generate(output="patient_selection_diagram")
 )
- """
-""" flow.diagram
+
+flow.diagram
 
 print("\nAccessing results:")
 print(f"Flow table shape: {flow.flow_table.shape}")
@@ -483,8 +483,9 @@ print(f"Characteristics table shape: {flow.characteristics.shape}")
 print(f"Drifts table shape: {flow.drifts.shape}")
 print(f"Diagram saved to: {flow.diagram}") 
 
+"""
 # Method 2: Using the quick_flow method
-print("\nCreating flow diagram using the quick_flow method...") """
+print("\nCreating flow diagram using the quick_flow method...") 
 
 exclusions = [
     (data["age"] >= 18, "Age < 18 years"),
@@ -498,4 +499,4 @@ quick_flow = EasyFlow.quick_flow(
     output="quick_flow_diagram"
 )
 
-print(f"\nQuick flow diagram saved to: {quick_flow.diagram}")
+print(f"\nQuick flow diagram saved to: {quick_flow.diagram}")"""

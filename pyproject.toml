@@ -26,6 +26,11 @@ dependencies = [
     "matplotlib"
 ]
 
+[project.optional-dependencies]
+full = [
+    "pygraphviz>=1.7",  # This tries to compile against system graphviz
+]
+
 [tool.black]
 line-length = 119
 
