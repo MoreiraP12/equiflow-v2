@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>equiflow - Equity-focused Cohort Selection Flow Diagrams</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+    <script>hljs.highlightAll();</script>
+    <style>
+        :root {
+            --primary-color: #3b5998;
+            --secondary-color: #6d84b4;
+            --accent-color: #8b9dc3;
+            --light-accent: #dfe3ee;
+            --dark-color: #333333;
+            --light-color: #f7f7f7;
+            --text-color: #2c2c2c;
+            --border-radius: 8px;
+            --box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            --transition: all 0.3s ease;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+            line-height: 1.7;
+            color: var(--text-color);
+            background-color: #f9f9f9;
+        }
+        
+        header {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            padding: 2.5rem 0;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        header::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: radial-gradient(circle at 20% 50%, rgba(255,255,255,0.1) 0%, transparent 50%);
+            z-index: 1;
+        }
+        
+        header .content {
+            position: relative;
+            z-index: 2;
+            text-align: center;
+        }
+        
+        .container {
+            width: 90%;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+        
+        h1 {
+            font-size: 3.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.5px;
+        }
+        
+        h2 {
+            font-size: 2.2rem;
+            font-weight: 600;
+            margin: 2.5rem 0 1.5rem;
+            color: var(--primary-color);
+            border-bottom: 2px solid var(--light-accent);
+            padding-bottom: 0.5rem;
+        }
+        
+        h3 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin: 2rem 0 1rem;
+            color: var(--dark-color);
+        }
+        
+        p {
+            margin-bottom: 1.2rem;
+        }
+        
+        .tagline {
+            font-size: 1.5rem;
+            opacity: 0.9;
+            max-width: 800px;
+            margin: 1rem auto;
+        }
+        
+        .badge {
+            display: inline-block;
+            background-color: rgba(255, 255, 255, 0.2);
+            padding: 0.3rem 0.7rem;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            margin: 0.5rem 0.3rem;
+            backdrop-filter: blur(5px);
+        }
+        
+        nav {
+            background-color: white;
+            box-shadow: var(--box-shadow);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        nav ul {
+            display: flex;
+            list-style: none;
+        }
+        
+        nav li {
+            position: relative;
+        }
+        
+        nav li a {
+            display: block;
+            color: var(--dark-color);
+            text-decoration: none;
+            padding: 1.2rem 1.5rem;
+            font-weight: 500;
+            transition: var(--transition);
+        }
+        
+        nav li a:hover {
+            color: var(--primary-color);
+            background-color: var(--light-accent);
+        }
+        
+        nav li a.active {
+            color: var(--primary-color);
+            font-weight: 600;
+        }
+        
+        nav li a.active::after {
+            content: "";
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background-color: var(--primary-color);
+        }
+        
+        main {
+            padding: 3rem 0;
+        }
+        
+        section {
+            margin-bottom: 4rem;
+            background-color: white;
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            padding: 2.5rem;
+        }
+        
+        pre {
+            background-color: #282c34;
+            border-radius: var(--border-radius);
+            padding: 1.5rem;
+            overflow-x: auto;
+            margin: 1.5rem 0;
+        }
+        
+        code {
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.9rem;
+        }
+        
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin: 2rem 0;
+        }
+        
+        .feature-card {
+            background-color: var(--light-color);
+            border-radius: var(--border-radius);
+            padding: 1.5rem;
+            border-left: 4px solid var(--accent-color);
+            transition: var(--transition);
+        }
+        
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: var(--box-shadow);
+        }
+        
+        .feature-card h3 {
+            color: var(--primary-color);
+            margin-top: 0;
+        }
+        
+        .tabs {
+            margin: 2rem 0;
+        }
+        
+        .tab-buttons {
+            display: flex;
+            border-bottom: 2px solid var(--light-accent);
+            margin-bottom: 1.5rem;
+        }
+        
+        .tab-button {
+            background: none;
+            border: none;
+            padding: 0.8rem 1.5rem;
+            font-size: 1rem;
+            font-weight: 500;
+            color: var(--text-color);
+            cursor: pointer;
+            transition: var(--transition);
+            position: relative;
+        }
+        
+        .tab-button.active {
+            color: var(--primary-color);
+            font-weight: 600;
+        }
+        
+        .tab-button.active::after {
+            content: "";
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background-color: var(--primary-color);
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .example-image {
+            max-width: 100%;
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            margin: 1.5rem 0;
+        }
+        
+        footer {
+            background-color: var(--dark-color);
+            color: white;
+            padding: 3rem 0;
+            text-align: center;
+        }
+        
+        footer a {
+            color: var(--light-accent);
+            text-decoration: none;
+            transition: var(--transition);
+        }
+        
+        footer a:hover {
+            color: white;
+            text-decoration: underline;
+        }
+        
+        .btn {
+            display: inline-block;
+            padding: 0.8rem 1.5rem;
+            background-color: var(--primary-color);
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: 500;
+            transition: var(--transition);
+            border: none;
+            cursor: pointer;
+        }
+        
+        .btn:hover {
+            background-color: var(--secondary-color);
+            transform: translateY(-2px);
+        }
+        
+        .btn-secondary {
+            background-color: white;
+            color: var(--primary-color);
+            border: 2px solid var(--primary-color);
+        }
+        
+        .btn-secondary:hover {
+            background-color: var(--light-accent);
+        }
+        
+        .cta-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            margin: 2rem 0;
+        }
+        
+        .construction-note {
+            display: inline-block;
+            background-color: #fbf0d9;
+            border-left: 4px solid #ffc107;
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: var(--border-radius);
+        }
+        
+        .citation {
+            background-color: var(--light-color);
+            padding: 1.5rem;
+            border-radius: var(--border-radius);
+            margin: 1.5rem 0;
+            border-left: 4px solid var(--accent-color);
+        }
+        
+        .citation code {
+            display: block;
+            background-color: rgba(0, 0, 0, 0.05);
+            padding: 0.5rem;
+            border-radius: 4px;
+            margin-top: 0.5rem;
+        }
+        
+        .toc {
+            background-color: var(--light-color);
+            padding: 1.5rem;
+            border-radius: var(--border-radius);
+            margin: 0 0 2rem 0;
+            position: sticky;
+            top: 90px;
+        }
+        
+        .toc-title {
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--primary-color);
+        }
+        
+        .toc ul {
+            list-style: none;
+        }
+        
+        .toc li {
+            margin-bottom: 0.5rem;
+        }
+        
+        .toc a {
+            text-decoration: none;
+            color: var(--text-color);
+            transition: var(--transition);
+        }
+        
+        .toc a:hover {
+            color: var(--primary-color);
+        }
+        
+        .layout {
+            display: grid;
+            grid-template-columns: 3fr 1fr;
+            gap: 2rem;
+        }
+        
+        .demo-diagram {
+            display: block;
+            max-width: 100%;
+            height: auto;
+            margin: 2rem auto;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            border-radius: 8px;
+        }
+        
+        .method {
+            background-color: var(--light-color);
+            padding: 1.5rem;
+            border-radius: var(--border-radius);
+            margin: 1.5rem 0;
+            border-left: 4px solid var(--secondary-color);
+        }
+        
+        .method h4 {
+            color: var(--primary-color);
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            margin-bottom: 1rem;
+        }
+        
+        .parameter-name {
+            font-weight: bold;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+        }
+        
+        @media (max-width: 900px) {
+            .layout {
+                grid-template-columns: 1fr;
+            }
+            
+            .toc {
+                position: static;
+                margin-bottom: 2rem;
+            }
+            
+            h1 {
+                font-size: 2.5rem;
+            }
+            
+            .tagline {
+                font-size: 1.2rem;
+            }
+            
+            nav ul {
+                flex-wrap: wrap;
+            }
+            
+            nav li a {
+                padding: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container content">
+            <h1>equiflow</h1>
+            <p class="tagline">Equity-focused Cohort Selection Flow Diagrams for transparent and reproducible research</p>
+            <div>
+                <span class="badge">Python</span>
+                <span class="badge">Machine Learning</span>
+                <span class="badge">Clinical Research</span>
+                <span class="badge">Data Visualization</span>
+            </div>
+            <div class="cta-buttons">
+                <a href="#installation" class="btn">Get Started</a>
+                <a href="https://github.com/yourusername/equiflow" class="btn btn-secondary">View on GitHub</a>
+            </div>
+        </div>
+    </header>
+    
+    <nav>
+        <div class="container">
+            <ul>
+                <li><a href="#overview" class="active">Overview</a></li>
+                <li><a href="#installation">Installation</a></li>
+                <li><a href="#usage">Usage</a></li>
+                <li><a href="#api">API Reference</a></li>
+                <li><a href="#examples">Examples</a></li>
+                <li><a href="#motivation">Motivation</a></li>
+                <li><a href="#citation">Citation</a></li>
+            </ul>
+        </div>
+    </nav>
+    
+    <main class="container">
+        <p class="construction-note"><strong>Note:</strong> This package is currently under construction!</p>
+        
+        <div class="layout">
+            <div class="content">
+                <section id="overview">
+                    <h2>Overview</h2>
+                    <p><strong>equiflow</strong> is a package designed to generate "Equity-focused Cohort Selection Flow Diagrams". We aim to facilitate research, increase its reproducibility, and improve the transparency of the process of cohort curation in machine learning studies.</p>
+                    
+                    <h3>Vision</h3>
+                    <p><strong>equiflow</strong> provides tabular and visual representations of inclusion and exclusion criteria applied to a clinical dataset. Each patient exclusion step can depict the cohort composition across demographics and outcomes, to interrogate potential sampling selection bias.</p>
+                    
+                    <p>This package enhances the transparency and reproducibility of research in the medical machine learning field. It complements other tools like tableone, which is used for generating summary statistics for patient populations.</p>
+                    
+                    <img src="/api/placeholder/800/400" alt="Flow Diagram Example" class="demo-diagram">
+                    
+                    <div class="feature-grid">
+                        <div class="feature-card">
+                            <h3>Cohort Flow Visualization</h3>
+                            <p>Generate flow diagrams showing initial cohort size, exclusion criteria, resulting cohort sizes, and optional visualizations of variable distributions.</p>
+                        </div>
+                        
+                        <div class="feature-card">
+                            <h3>Distribution Analysis</h3>
+                            <p>Analyze categorical variables, normally distributed continuous variables, non-normally distributed continuous variables, and missing data rates.</p>
+                        </div>
+                        
+                        <div class="feature-card">
+                            <h3>Distribution Drift Measurement</h3>
+                            <p>Calculate standardized mean differences (SMDs) between cohorts to quantify distribution changes and potential bias.</p>
+                        </div>
+                        
+                        <div class="feature-card">
+                            <h3>Tabular Representations</h3>
+                            <p>Generate tables of flows, characteristics, and distribution shifts for detailed analysis and reporting.</p>
+                        </div>
+                    </div>
+                </section>
+                
+                <section id="installation">
+                    <h2>Installation</h2>
+                    <p>Install equiflow using pip:</p>
+                    <pre><code class="language-bash">pip install equiflow</code></pre>
+                    
+                    <h3>Dependencies</h3>
+                    <p>equiflow requires the following Python packages:</p>
+                    <ul>
+                        <li>pandas</li>
+                        <li>numpy</li>
+                        <li>matplotlib</li>
+                        <li>graphviz</li>
+                    </ul>
+                </section>
+                
+                <section id="usage">
+                    <h2>Basic Usage</h2>
+                    <p>Here's a simple example of how to use equiflow:</p>
+                    
+                    <pre><code class="language-python">from equiflow import EquiFlow
+import pandas as pd
+
+# Initialize with your dataset
+flow = EquiFlow(
+    data=your_dataframe,
+    categorical=['sex', 'race', 'insurance_type'],
+    normal=['age', 'weight', 'height'],
+    nonnormal=['hospital_stay_days', 'num_previous_admissions']
+)
+
+# Add exclusion steps
+flow.add_exclusion(
+    mask=your_dataframe['age'] >= 18,
+    exclusion_reason="Age < 18 years",
+    new_cohort_label="Adult patients"
+)
+
+flow.add_exclusion(
+    mask=your_dataframe['has_complete_data'] == True,
+    exclusion_reason="Incomplete data",
+    new_cohort_label="Complete cases"
+)
+
+# View tables
+flow_table = flow.view_table_flows()
+characteristics_table = flow.view_table_characteristics()
+drifts_table = flow.view_table_drifts()
+
+# Generate flow diagram
+flow.plot_flows(
+    output_file="patient_selection_flow"
+)</code></pre>
+                
+                    <h3>Using EasyFlow</h3>
+                    <p>For a simplified interface, you can use the EasyFlow class:</p>
+                    
+                    <pre><code class="language-python">from equiflow import EasyFlow
+import pandas as pd
+
+# Quick usage with automatic variable type detection
+flow = EasyFlow(your_dataframe)
+
+# Add exclusion steps
+flow.exclude(your_dataframe['age'] >= 18, "Age < 18 years")
+flow.exclude(your_dataframe['has_complete_data'] == True, "Incomplete data")
+
+# Generate all outputs
+flow.generate(output="patient_selection_flow")</code></pre>
+                </section>
+                
+                <section id="api">
+                    <h2>API Reference</h2>
+                    
+                    <h3>EquiFlow Class</h3>
+                    <p>The main class for generating equity-focused cohort flow diagrams.</p>
+                    
+                    <div class="method">
+                        <h4>EquiFlow.__init__(data=None, dfs=None, initial_cohort_label=None, ...)</h4>
+                        <p>Initialize an EquiFlow object for creating cohort flow diagrams.</p>
+                        
+                        <h5>Parameters:</h5>
+                        <ul>
+                            <li><span class="parameter-name">data</span>: pd.DataFrame, optional - A single DataFrame containing the initial cohort.</li>
+                            <li><span class="parameter-name">dfs</span>: list of pd.DataFrame, optional - A list of DataFrames representing sequential cohorts after exclusions.</li>
+                            <li><span class="parameter-name">initial_cohort_label</span>: str, optional - Label for the initial cohort.</li>
+                            <li><span class="parameter-name">categorical</span>: list, optional - List of categorical variable names.</li>
+                            <li><span class="parameter-name">normal</span>: list, optional - List of normally distributed continuous variable names.</li>
+                            <li><span class="parameter-name">nonnormal</span>: list, optional - List of non-normally distributed continuous variable names.</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="method">
+                        <h4>add_exclusion(mask=None, new_cohort=None, exclusion_reason=None, new_cohort_label=None)</h4>
+                        <p>Add an exclusion step to the flow diagram.</p>
+                        
+                        <h5>Parameters:</h5>
+                        <ul>
+                            <li><span class="parameter-name">mask</span>: bool, optional - Boolean mask to select rows to keep.</li>
+                            <li><span class="parameter-name">new_cohort</span>: pd.DataFrame, optional - New cohort after exclusions.</li>
+                            <li><span class="parameter-name">exclusion_reason</span>: str, optional - Reason for the exclusion.</li>
+                            <li><span class="parameter-name">new_cohort_label</span>: str, optional - Label for the resulting cohort.</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="method">
+                        <h4>view_table_flows(label_suffix=None, thousands_sep=None)</h4>
+                        <p>Generate a table of cohort flows.</p>
+                        
+                        <h5>Returns:</h5>
+                        <p>pd.DataFrame: Table of cohort flows showing initial size, removed observations, and result size.</p>
+                    </div>
+                    
+                    <div class="method">
+                        <h4>view_table_characteristics(...)</h4>
+                        <p>Generate a table of cohort characteristics.</p>
+                        
+                        <h5>Returns:</h5>
+                        <p>pd.DataFrame: Table of cohort characteristics.</p>
+                    </div>
+                    
+                    <div class="method">
+                        <h4>view_table_drifts(drifts_by_class=False, ...)</h4>
+                        <p>Generate a table of standardized mean differences (drifts).</p>
+                        
+                        <h5>Returns:</h5>
+                        <p>pd.DataFrame: Table of standardized mean differences between cohorts.</p>
+                    </div>
+                    
+                    <div class="method">
+                        <h4>plot_flows(...)</h4>
+                        <p>Create and display a flow diagram of the cohort exclusion process.</p>
+                    </div>
+                    
+                    <h3>EasyFlow Class</h3>
+                    <p>A simplified interface for creating equity-focused cohort flow diagrams.</p>
+                    
+                    <div class="method">
+                        <h4>EasyFlow.__init__(data, title="Cohort Selection", auto_detect=True)</h4>
+                        <p>Initialize EasyFlow with a DataFrame and optional title.</p>
+                    </div>
+                    
+                    <div class="method">
+                        <h4>exclude(condition, label=None)</h4>
+                        <p>Add an exclusion step based on a boolean condition.</p>
+                    </div>
+                    
+                    <div class="method">
+                        <h4>generate(output="flow_diagram", show=True, format="pdf")</h4>
+                        <p>Generate the flow diagram and tables.</p>
+                    </div>
+                </section>
+                
+                <section id="examples">
+                    <h2>Examples</h2>
+                    
+                    <h3>Customizing Variable Types</h3>
+                    <pre><code class="language-python"># Explicitly set variable types
+flow = EasyFlow(patient_data)
+    .categorize(['sex', 'race', 'insurance_type'])
+    .measure_normal(['age', 'weight', 'height'])
+    .measure_nonnormal(['hospital_stay_days', 'num_previous_admissions'])
+
+# Add exclusions
+flow.exclude(patient_data['age'] >= 18, "Age < 18 years")
+flow.exclude(patient_data['has_complete_data'] == True, "Incomplete data")
+
+# Generate outputs
+flow.generate()</code></pre>
+                    
+                    <h3>Quickly Creating a Flow Diagram</h3>
+                    <pre><code class="language-python"># Define exclusions as a list of (condition, label) tuples
+exclusions = [
+    (patient_data['age'] >= 18, "Age < 18 years"),
+    (patient_data['has_complete_data'] == True, "Incomplete data"),
+    (patient_data['followup_complete'] == True, "Incomplete follow-up")
+]
+
+# Create flow diagram with one line
+flow = EasyFlow.quick_flow(patient_data, exclusions, output="patient_flow")</code></pre>
+                    
+                    <h3>Advanced Customization</h3>
+                    <pre><code class="language-python"># Custom colors and styling
+flow.plot_flows(
+    box_width=3,
+    box_height=1.2,
+    plot_dists=True,
+    smds=True,
+    legend=True,
+    cohort_node_color="aliceblue",
+    exclusion_node_color="mistyrose",
+    categorical_bar_colors=["#4e79a7", "#f28e2c", "#e15759", "#76b7b2"],
+    missing_value_color="#cccccc",
+    continuous_var_color="#b3cde3",
+    edge_color="#333333"
+)</code></pre>
+                </section>
+                
+                <section id="motivation">
+                    <h2>Motivation</h2>
+                    <p>Selection bias can arise through many aspects of a study, including recruitment, inclusion/exclusion criteria, input-level exclusion and outcome-level exclusion, and often reflects the underrepresentation of populations historically disadvantaged in medical research. The effects of selection bias can be further amplified when non-representative samples are used in artificial intelligence (AI) and machine learning (ML) applications to construct clinical algorithms.</p>
+                    
+                    <p>Building on the "Data Cards" initiative for transparency in AI research, we advocate for the addition of a <strong>participant flow diagram for AI studies detailing relevant sociodemographic</strong> and/or clinical characteristics of excluded participants across study phases, with the goal of identifying potential algorithmic biases before their clinical implementation.</p>
+                    
+                    <p>Through standardized reporting of participant flow diagrams, we aim to better identify potential inequities embedded in AI applications, facilitating more reliable and equitable clinical algorithms.</p>
+                </section>
+                
+                <section id="citation">
+                    <h2>Citation</h2>
+                    <p>The concept was first introduced in our position paper:</p>
+                    
+                    <div class="citation">
+                        <p>Ellen JG, Matos J, Viola M, et al. Participant flow diagrams for health equity in AI. J Biomed Inform. 2024;152:104631.</p>
+                        <code>https://doi.org/10.1016/j.jbi.2024.104631</code>
+                    </div>
+                    
+                    <p>If you use EquiFlow in your research, please cite:</p>
+                    <div class="citation">
+                        <p>[Citation information would be here]</p>
+                    </div>
+                </section>
+            </div>
+            
+            <aside>
+                <div class="toc">
+                    <div class="toc-title">Contents</div>
+                    <ul>
+                        <li><a href="#overview">Overview</a></li>
+                        <li><a href="#installation">Installation</a></li>
+                        <li><a href="#usage">Basic Usage</a></li>
+                        <li><a href="#api">API Reference</a>
+                            <ul>
+                                <li><a href="#api-equiflow">EquiFlow Class</a></li>
+                                <li><a href="#api-easyflow">EasyFlow Class</a></li>
+                            </ul>
+                        </li>
+                        <li><a href="#examples">Examples</a></li>
+                        <li><a href="#motivation">Motivation</a></li>
+                        <li><a href="#citation">Citation</a></li>
+                    </ul>
+                </div>
+            </aside>
+        </div>
+    </main>
+    
+    <footer>
+        <div class="container">
+            <p>equiflow is released under the MIT License.</p>
+            <p>Documentation generated on March 31, 2025.</p>
+            <p>Built with ❤️ for better health equity in AI</p>
+        </div>
+    </footer>
+
+    <script>
+        // Handle smooth scrolling for anchor links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    window.scrollTo({
+                        top: target.offsetTop - 80,
+                        behavior: 'smooth'
+                    });
+                    
+                    // Update active nav link
+                    document.querySelectorAll('nav a').forEach(link => {
+                        link.classList.remove('active');
+                    });
+                    this.classList.add('active');
+                }
+            });
+        });
+        
+        // Handle navigation highlighting on scroll
+        window.addEventListener('scroll', function() {
+            const sections = document.querySelectorAll('section');
+            let current = '';
+            
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop - 100;
+                if (pageYOffset >= sectionTop) {
+                    current = section.getAttribute('id');
+                }
+            });
+            
+            document.querySelectorAll('nav a').forEach(link => {
+                link.classList.remove('active');
+                const href = link.getAttribute('href').substring(1);
+                if (href === current) {
+                    link.classList.add('active');
+                }
+            });
+        });
+    </script>
+</body>
+</html>

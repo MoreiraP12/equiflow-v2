@@ -11,7 +11,7 @@ Adult Patients" fillcolor=white fontname=Helvetica shape=box style=filled]
 Complete BMI Data" fillcolor=white fontname=Helvetica shape=box style=filled]
 	A3 [label="923 patients
 Normal Lab Values" fillcolor=white fontname=Helvetica shape=box style=filled]
-	plot_dist3 [label="" color=transparent height=1.2 image="part3.svg" imagepos=bc imagescale=true shape=box width=3.0]
+	plot_dist3 [label="" color=transparent height=1.2 image="/Users/pedro/Desktop/equiflow-v2/imgs/imgs/part3.svg" imagepos=bc imagescale=true shape=box width=3.0]
 	{
 		rank=same
 		A3
@@ -51,28 +51,28 @@ Lab value > 5" fillcolor="#f5f5f5" shape=box style=filled]
 		IA2
 		E2
 	}
-	plot_dist0 [label="" color=transparent height=1.2 image="part0.svg" imagepos=bc imagescale=true shape=box width=3.25]
+	plot_dist0 [label="" color=transparent height=1.2 image="/Users/pedro/Desktop/equiflow-v2/imgs/imgs/part0.svg" imagepos=bc imagescale=true shape=box width=3.25]
 	A0 -> plot_dist0 [constraint=false style=invis]
 	{
 		rank=same
 		A0
 		plot_dist0
 	}
-	plot_dist1 [label="" color=transparent height=1.2 image="part1.svg" imagepos=bc imagescale=true shape=box width=3.25]
+	plot_dist1 [label="" color=transparent height=1.2 image="/Users/pedro/Desktop/equiflow-v2/imgs/imgs/part1.svg" imagepos=bc imagescale=true shape=box width=3.25]
 	A1 -> plot_dist1 [constraint=false style=invis]
 	{
 		rank=same
 		A1
 		plot_dist1
 	}
-	plot_dist2 [label="" color=transparent height=1.2 image="part2.svg" imagepos=bc imagescale=true shape=box width=3.25]
+	plot_dist2 [label="" color=transparent height=1.2 image="/Users/pedro/Desktop/equiflow-v2/imgs/imgs/part2.svg" imagepos=bc imagescale=true shape=box width=3.25]
 	A2 -> plot_dist2 [constraint=false style=invis]
 	{
 		rank=same
 		A2
 		plot_dist2
 	}
-	legend [label="" color=transparent height=1.2 image="legend.svg" imagepos=bl imagescale=true shape=box width=2.5]
+	legend [label="" color=transparent height=1.2 image="/Users/pedro/Desktop/equiflow-v2/imgs/imgs/legend.svg" imagepos=bl imagescale=true shape=box width=2.5]
 	E0 -> legend [style=invis]
 	{
 		rank=same

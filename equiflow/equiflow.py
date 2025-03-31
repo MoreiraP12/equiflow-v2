@@ -3,12 +3,14 @@ The equiflow package is used for creating "Equity-focused Cohort Section Flow Di
 for cohort selection in clinical and machine learning papers.
 """
 
-from typing import Optional, Union
-import numpy as np
-import pandas as pd
+from typing import Optional, Union, List, Dict, Any, Tuple, Callable
 import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
 import os
+import inspect
 import graphviz
+import re
 
 
 class EquiFlow:
@@ -1691,138 +1693,239 @@ class FlowDiagram:
         self.output_path = os.path.join(self.output_folder, self.output_file)
         self.display = display_flow_diagram
 
-
     def _plot_dists(self):
+        """Generate distribution plots for each cohort."""
+        import os
+        import matplotlib.pyplot as plt
+        import numpy as np
+        
+        # Ensure output directories exist
+        imgs_dir = os.path.join(self.output_folder, 'imgs')
+        os.makedirs(imgs_dir, exist_ok=True)
 
+        # Store the original working directory
+        orig_dir = os.getcwd()
+        
         # Extract data from table_characteristics
-        categorical = self.table_characteristics._renamed_categorical
-
+        categorical = self.table_characteristics._categorical  # Use _categorical directly
+        
         table = self.table_characteristics.view()
         if self.smds:
-          table_smds = self.table_drifts.view_simple()
+            table_smds = self.table_drifts.view_simple()
 
+        # Get all variables except 'Overall'
         vars = table.loc[
             table.index.get_level_values(0) != 'Overall'
         ].index.get_level_values(0).unique().tolist()
 
+        # Get all cohorts
         cohorts = table.columns.get_level_values(1).unique().tolist()
 
-        # Define the legend handles (empty for now)
+        # Define the legend handles and labels
         legend_handles = []
         legend_labels = []
 
-        # Iterate through Cohort number
+        # Iterate through each cohort
         for c, coh in enumerate(cohorts):
             fig, axes = plt.subplots(1, 1, figsize=(4, 2), dpi=150)
             
-            # Iterate through variables
+            # Iterate through each variable
             for v, var in enumerate(vars):
+                # Extract original variable name (without formatting)
+                orig_var = var
+                if ', ' in var:
+                    orig_var = var.split(', ')[0]
                 
-                if var in categorical:
+                # Get the inverse rename mapping to find original name
+                var_original = None
+                for k, v_name in self.table_characteristics._rename.items():
+                    if v_name == orig_var:
+                        var_original = k
+                        break
+                
+                # If we couldn't find it, use the name as is
+                if var_original is None:
+                    var_original = orig_var
+                
+                # Check if this is a categorical variable
+                if var_original in categorical:
+                    # Get all value names for this variable
                     values_names = table.loc[
                         table.index.get_level_values(0) == var
-                    ].index.get_level_values(1)
-
+                    ].index.get_level_values(1).tolist()
+                    
+                    # Remove 'Missing' to handle separately
+                    if 'Missing' in values_names:
+                        values_names.remove('Missing')
+                    
+                    # Plot each value as a horizontal bar segment
                     cum_width = 0
                     for val_idx, val in enumerate(values_names):
+                        # Get the value (percentage)
                         value = table.loc[(var, val), ('Cohort', coh)]
-                        if val != 'Missing':
-                            # Use categorical_bar_colors if provided
-                            if self.categorical_bar_colors and val_idx < len(self.categorical_bar_colors):
-                                color = self.categorical_bar_colors[val_idx]
-                                bar = axes.barh(v, value, left=cum_width, height=.8, color=color, edgecolor='white')
-                            else:
-                                bar = axes.barh(v, value, left=cum_width, height=.8, edgecolor='white')
-                            textcolor = 'white'
-                            if coh == 0:
-                                legend_handles.append(bar[0])
-                                if self.legend_with_vars:
-                                    legend_labels.append(f"{var}: {val}")
-                                else:
-                                    legend_labels.append(val)
+                        
+                        # Convert string percentage to float if needed
+                        if isinstance(value, str):
+                            if '%' in value:
+                                try:
+                                    value = float(value.replace('%', '').strip())
+                                except:
+                                    value = 0
+                            elif '(' in value:
+                                try:
+                                    # Extract percentage from "N (XX.X)" format
+                                    value = float(value.split('(')[1].split(')')[0])
+                                except:
+                                    value = 0
+                        
+                        # Ensure value is numeric
+                        if not isinstance(value, (int, float)):
+                            try:
+                                value = float(value)
+                            except:
+                                value = 0
+                        
+                        # Use custom colors if provided
+                        if self.categorical_bar_colors and val_idx < len(self.categorical_bar_colors):
+                            color = self.categorical_bar_colors[val_idx]
+                            bar = axes.barh(v, value, left=cum_width, height=.8, color=color, edgecolor='white')
                         else:
-                            bar = axes.barh(v, value, left=cum_width, height=.8, color=self.missing_value_color,
-                                        hatch='///////', edgecolor='white')
-                            textcolor = 'black'
-                            if (coh == 0) & ('Missing' not in legend_labels):
-                                legend_handles.append(bar[0])
-                                legend_labels.append('Missing')
-
+                            bar = axes.barh(v, value, left=cum_width, height=.8, edgecolor='white')
+                        
+                        # Choose text color based on bar darkness
+                        textcolor = 'white' if value > 25 else 'black'
+                        
+                        # Add to legend if this is the first cohort
+                        if coh == 0:
+                            legend_handles.append(bar[0])
+                            if self.legend_with_vars:
+                                legend_labels.append(f"{orig_var}: {val}")
+                            else:
+                                legend_labels.append(val)
+                        
+                        # Add value text if it's large enough
                         if value > 5:
                             axes.text(cum_width + value/2, v, '{:.1f}'.format(value),
                                     ha='center', va='center', color=textcolor, fontsize=8)
-                        cum_width += value
                         
-                    if (coh > 0) & (self.smds):
+                        cum_width += value
+                    
+                    # Add missing values at the end if present
+                    if 'Missing' in table.loc[table.index.get_level_values(0) == var].index.get_level_values(1):
+                        missing_value = table.loc[(var, 'Missing'), ('Cohort', coh)]
+                        
+                        # Convert to numeric if needed
+                        if isinstance(missing_value, str):
+                            try:
+                                if '%' in missing_value:
+                                    missing_value = float(missing_value.replace('%', '').strip())
+                                elif '(' in missing_value:
+                                    missing_value = float(missing_value.split('(')[1].split(')')[0])
+                                else:
+                                    missing_value = float(missing_value)
+                            except:
+                                missing_value = 0
+                        
+                        # Plot missing value bar if it's non-zero
+                        if missing_value > 0:
+                            bar = axes.barh(v, missing_value, left=cum_width, height=.8, 
+                                        color=self.missing_value_color, hatch='///////', edgecolor='white')
+                            
+                            # Add missing to legend if needed
+                            if (coh == 0) and ('Missing' not in legend_labels):
+                                legend_handles.append(bar[0])
+                                legend_labels.append('Missing')
+                            
+                            # Add text if large enough
+                            if missing_value > 5:
+                                axes.text(cum_width + missing_value/2, v, '{:.1f}'.format(missing_value),
+                                        ha='center', va='center', color='black', fontsize=8)
+                    
+                    # Add SMDs if enabled
+                    if (coh > 0) and (self.smds):
                         col_name = f"{coh-1} to {coh}"
-                        var_smd = var.split(',')[0]
-                        smd = table_smds.loc[var_smd, (col_name)]
-                        axes.text(-1, v, f'{smd}', ha='right', va='center', fontsize=8, color='black', fontweight='normal')
-
+                        var_smd = orig_var
+                        if var_smd in table_smds.index:
+                            smd = table_smds.loc[var_smd, col_name]
+                            axes.text(-1, v, f'{smd}', ha='right', va='center', fontsize=8, color='black', fontweight='normal')
+                
                 else:
+                    # Handle continuous variables
                     val = ' '
                     value = table.loc[(var, val), ('Cohort', coh)]
                     axes.barh(v, 100, left=0, height=.8, color=self.continuous_var_color, edgecolor='white')
                     axes.text(50, v, f"{value}", ha='center', va='center', color='black', fontsize=8)
                     
-                    if (coh > 0) & (val != 'Missing') & (self.smds):
+                    # Add SMDs if enabled
+                    if (coh > 0) and (self.smds):
                         col_name = f"{coh-1} to {coh}"
-                        var_smd = var.split(',')[0]
-                        smd = table_smds.loc[(var_smd), (col_name)]
-                        axes.text(-1, v, f'{smd}', ha='right', va='center', fontsize=8, color='black', fontweight='normal')
+                        var_smd = orig_var
+                        if var_smd in table_smds.index:
+                            smd = table_smds.loc[var_smd, col_name]
+                            axes.text(-1, v, f'{smd}', ha='right', va='center', fontsize=8, color='black', fontweight='normal')
                 
-                axes.text(101, v, var, ha='left', va='center', fontsize=8, color='black', fontweight='normal')
+                # Add variable name on the right
+                axes.text(101, v, orig_var, ha='left', va='center', fontsize=8, color='black', fontweight='normal')
 
+            # Add SMD header if needed
+            if self.smds and coh > 0:
+                color_smd = 'black'
+                text_smd = f'SMD ({coh-1}, {coh})'
+                axes.text(-1, len(vars) + .75, text_smd, ha='right', va='center', fontsize=8, color=color_smd, fontweight='bold')
 
-            if self.smds:
-                if coh > 0:
-                    color_smd = 'black'
-                    text_smd = f'SMD ({coh-1}, {coh})'
-                elif coh == 0:
-                    color_smd = 'white'
-                    text_smd = f'SMD (0, 0)'
-                
-                axes.text(-1, v + .75, text_smd, ha='right', va='center', fontsize=8, color=color_smd, fontweight='bold')
-
+            # Format the plot
             axes.set_yticks([])
             axes.set_xticks([])
+            axes.set_xlim([0, 110])  # Set x-axis limit to ensure consistent width
             for spine in axes.spines.values():
                 spine.set_visible(False)
 
-            if coh == 0:
-                # move 'Missing' to the end of the legend
+            # Save the figure with absolute path
+            plt.tight_layout()
+            svg_file = os.path.join(imgs_dir, f'part{c}.svg')
+            plt.savefig(svg_file, dpi=300, bbox_inches='tight')
+            plt.close()
+
+        # Create legend if needed
+        if self.legend and len(legend_handles) > 0:
+            # Move 'Missing' to the end of the legend if present
+            if 'Missing' in legend_labels:
                 missing_idx = legend_labels.index('Missing')
                 legend_labels.append(legend_labels.pop(missing_idx))
                 legend_handles.append(legend_handles.pop(missing_idx))
 
-                # create a separate figure for the legend
-                legend_fig, legend_ax = plt.subplots(figsize=(len(legend_labels)/4, 1))  # Adjust figsize as necessary
-                legend_ax.axis('off')
-                fig_legend = legend_ax.legend(legend_handles, legend_labels, loc='center', ncol=1,
-                                            fontsize=8, frameon=False)
+            # Create a separate figure for the legend
+            legend_fig, legend_ax = plt.subplots(figsize=(len(legend_labels)/4, 1))
+            legend_ax.axis('off')
+            legend_ax.legend(legend_handles, legend_labels, loc='center', ncol=1,
+                            fontsize=8, frameon=False)
 
-                # save the legend figure
-                legend_fig.savefig('imgs/legend.svg', dpi=300, bbox_inches='tight')
-
-                # close the legend figure
-                plt.close(legend_fig)
-
-            plt.savefig(f'imgs/part{c}.svg', dpi=300, bbox_inches='tight')
-            plt.close()
-
+            # Save the legend with absolute path
+            legend_svg = os.path.join(imgs_dir, 'legend.svg')
+            legend_fig.savefig(legend_svg, dpi=300, bbox_inches='tight')
+            plt.close(legend_fig)
 
     def view(self):
-
-        # generate all auxiliary plots
-        if self.plot_dists:
-          self._plot_dists()
+        """Create and display a flow diagram of the cohort exclusion process."""
+        import os
+        import graphviz
         
+        # Generate all auxiliary plots
+        if self.plot_dists:
+            self._plot_dists()
+        
+        # Ensure output folders exist
+        os.makedirs(self.output_folder, exist_ok=True)
+        imgs_dir = os.path.join(self.output_folder, 'imgs')
+        os.makedirs(imgs_dir, exist_ok=True)
+        
+        # Create Graphviz diagram
         dot = graphviz.Digraph(
             comment='Cohort Exclusion Process',
             format='svg',
             graph_attr={'fontname': 'Helvetica', 'splines': 'ortho'},
             node_attr={'shape': 'box', 'style': 'filled', 'fixedsize': 'true',
-                       'width': str(self.width), 'height': str(self.height), 'fontname': 'Helvetica'},  
+                    'width': str(self.width), 'height': str(self.height), 'fontname': 'Helvetica'},  
             edge_attr={'dir': 'forward', 'arrowhead': 'vee', 'arrowsize': '0.5', 'minlen': '1'},
         )
 
@@ -1841,17 +1944,18 @@ class FlowDiagram:
         dot.node(f'A{num_columns}', final_node_label, shape='box', style='filled', fillcolor=self.cohort_node_color, fontname='Helvetica')
 
         if self.plot_dists:
-          # Add final distribution plot node
-          dot.node(f'plot_dist{num_columns}', label='',  image=f'part{num_columns}.svg',
-                  imagepos='bc',  imagescale='true',
-                  shape='box', color='transparent',
-                  width=str(self.width+0.5),
-                  height=str(self.height+0.2))
+            # Add final distribution plot node with absolute path
+            img_path = os.path.abspath(os.path.join(imgs_dir, f'part{num_columns}.svg'))
+            dot.node(f'plot_dist{num_columns}', label='',  image=img_path,
+                    imagepos='bc',  imagescale='true',
+                    shape='box', color='transparent',
+                    width=str(self.width+0.5),
+                    height=str(self.height+0.2))
 
-          with dot.subgraph() as s:
-              s.attr(rank='same')
-              s.node(f'A{num_columns}')
-              s.node(f'plot_dist{num_columns}')
+            with dot.subgraph() as s:
+                s.attr(rank='same')
+                s.node(f'A{num_columns}')
+                s.node(f'plot_dist{num_columns}')
 
         # Add exclusion criteria nodes with removed counts
         removed_counts = self.table_flows.loc['Removed, n']
@@ -1863,12 +1967,12 @@ class FlowDiagram:
         for i in range(num_columns + 1):
             dot.node(f'IA{i}', '', shape='point', height='0')
 
-        # connect the main cohort nodes with custom edge color
+        # Connect the main cohort nodes with custom edge color
         for i in range(num_columns):
             dot.edge(f'A{i}', f'IA{i}', arrowhead='none', color=self.edge_color)
             dot.edge(f'IA{i}', f'A{i+1}', color=self.edge_color)
 
-        # connect the exclusion nodes to the hidden nodes with custom edge color
+        # Connect the exclusion nodes to the hidden nodes with custom edge color
         for i in range(num_columns):
             dot.edge(f'IA{i}', f'E{i}', constraint='false', color=self.edge_color)
         
@@ -1880,1090 +1984,41 @@ class FlowDiagram:
                 s.node(f'E{i}')
 
         if self.plot_dists:
-          # Add boxes for the distributions``
-          for i in range(num_columns):
-              dot.node(f'plot_dist{i}', label='', image=f'part{i}.svg',
-                  imagepos='bc', imagescale='true',
-                  shape='box', color='transparent',
-                  width=str(self.width+0.75),
-                  height=str(self.height+0.2))
-              dot.edge(f'A{i}', f'plot_dist{i}', constraint='false', style='invis')
-              with dot.subgraph() as s:
-                  s.attr(rank='same')
-                  s.node(f'A{i}')
-                  s.node(f'plot_dist{i}')
+            # Add boxes for the distributions with absolute paths
+            for i in range(num_columns):
+                img_path = os.path.abspath(os.path.join(imgs_dir, f'part{i}.svg'))
+                dot.node(f'plot_dist{i}', label='', image=img_path,
+                    imagepos='bc', imagescale='true',
+                    shape='box', color='transparent',
+                    width=str(self.width+0.75),
+                    height=str(self.height+0.2))
+                dot.edge(f'A{i}', f'plot_dist{i}', constraint='false', style='invis')
+                with dot.subgraph() as s:
+                    s.attr(rank='same')
+                    s.node(f'A{i}')
+                    s.node(f'plot_dist{i}')
 
         if self.legend:
-          # Add a final node for the legend
-          dot.node('legend', label='', image=f'legend.svg', imagescale='true',
-                  shape='box', color='transparent',
-                  imagepos='bl',
-                  width=str(self.width),
-                  height=str(self.height+0.2))
+            # Add a final node for the legend with absolute path
+            legend_path = os.path.abspath(os.path.join(imgs_dir, 'legend.svg'))
+            dot.node('legend', label='', image=legend_path, imagescale='true',
+                    shape='box', color='transparent',
+                    imagepos='bl',
+                    width=str(self.width),
+                    height=str(self.height+0.2))
 
-          # Connect the final cohort node to the legend from the first exclusion edge
-          dot.edge(f'E0', 'legend', style='invis')
-          with dot.subgraph() as s:
-              s.attr(rank='same')
-              s.node(f'E0')
-              s.node('legend')
-        
-        # Save and render the graph
-        dot.render(self.output_path, view=self.display, format='pdf')
-    
-
-
-class OriginalFlowDiagram:
-    def __init__(self,
-                 table_flows: TableFlows,
-                 table_characteristics: TableCharacteristics = None,
-                 table_drifts: TableDrifts = None,
-                 new_cohort_labels: list = None,
-                 exclusion_labels: list = None,
-                 box_width: int = 2.5,
-                 box_height: int = 1,
-                 plot_dists: bool = True,
-                 smds: bool = True,
-                 legend: bool = True,
-                 legend_with_vars: bool = True,
-                 output_folder: str = 'imgs',
-                 output_file: str = 'flow_diagram',
-                 display_flow_diagram: bool = True,
-                 ):
-        
-        if (table_characteristics is None) & (plot_dists):
-            raise ValueError("table_characteristics must be provided if plot_dists is True")
-        
-        if (table_drifts is None) & (smds):
-            raise ValueError("table_drifts must be provided if smds is True")
-        
-        self.table_flows = table_flows.view()
-        self.table_characteristics = table_characteristics
-        self.table_drifts = table_drifts
-    
-
-        if new_cohort_labels is None:
-            new_cohort_labels = [f'Cohort {i},\n ___ subjects' for i in range(len(table_flows.view().columns))]
-
-        if exclusion_labels is None:
-            exclusion_labels = [f'Exclusion {i},\n ___ subjects' for i in range(len(table_flows.view().columns))]
-
-        self.cohort_labels = new_cohort_labels
-        self.exclusion_labels = exclusion_labels
-        self.width = box_width
-        self.height = box_height
-        self.plot_dists = plot_dists
-
-        if self.plot_dists == False:
-          self.smds = False
-          self.legend = False
-          self.legend_with_vars = False
-           
-
-        self.smds = smds
-        self.legend = legend
-        self.legend_with_vars = legend_with_vars
-        self.output_file = output_file
-        self.output_folder = output_folder
-
-        # Create the imgs folder if it does not exist
-        if not os.path.exists(self.output_folder):
-            os.makedirs(self.output_folder)
-
-        self.output_path = os.path.join(self.output_folder, self.output_file)
-        self.display = display_flow_diagram
-
-
-    def _plot_dists(self):
-
-        # Extract data from table_characteristics
-        categorical = self.table_characteristics._renamed_categorical
-
-        table = self.table_characteristics.view()
-        if self.smds:
-          table_smds = self.table_drifts.view_simple()
-
-        vars = table.loc[
-            table.index.get_level_values(0) != 'Overall'
-        ].index.get_level_values(0).unique().tolist()
-
-        cohorts = table.columns.get_level_values(1).unique().tolist()
-
-        # Define the legend handles (empty for now)
-        legend_handles = []
-        legend_labels = []
-
-        # Iterate through Cohort number
-        for c, coh in enumerate(cohorts):
-            fig, axes = plt.subplots(1, 1, figsize=(4, 2), dpi=150)
-            
-            # Iterate through variables
-            for v, var in enumerate(vars):
-                
-                if var in categorical:
-                    values_names = table.loc[
-                        table.index.get_level_values(0) == var
-                    ].index.get_level_values(1)
-
-                    cum_width = 0
-                    for val in values_names:
-                        value = table.loc[(var, val), ('Cohort', coh)]
-                        if val != 'Missing':
-                            bar = axes.barh(v, value, left=cum_width, height=.8, edgecolor='white')
-                            textcolor = 'white'
-                            if coh == 0:
-                                legend_handles.append(bar[0])
-                                if self.legend_with_vars:
-                                    legend_labels.append(f"{var}: {val}")
-                                else:
-                                    legend_labels.append(val)
-                        else:
-                            bar = axes.barh(v, value, left=cum_width, height=.8, color='lightgray',
-                                        hatch='///////', edgecolor='white')
-                            textcolor = 'black'
-                            if (coh == 0) & ('Missing' not in legend_labels):
-                                legend_handles.append(bar[0])
-                                legend_labels.append('Missing')
-
-                        if value > 5:
-                            axes.text(cum_width + value/2, v, '{:.1f}'.format(value),
-                                    ha='center', va='center', color=textcolor, fontsize=8)
-                        cum_width += value
-                        
-                    if (coh > 0) & (self.smds):
-                        col_name = f"{coh-1} to {coh}"
-                        var_smd = var.split(',')[0]
-                        smd = table_smds.loc[var_smd, (col_name)]
-                        axes.text(-1, v, f'{smd}', ha='right', va='center', fontsize=8, color='black', fontweight='normal')
-
-                else:
-                    val = ' '
-                    value = table.loc[(var, val), ('Cohort', coh)]
-                    axes.barh(v, 100, left=0, height=.8, color='lavender', edgecolor='white')
-                    axes.text(50, v, f"{value}", ha='center', va='center', color='black', fontsize=8)
-                    
-                    if (coh > 0) & (val != 'Missing') & (self.smds):
-                        col_name = f"{coh-1} to {coh}"
-                        var_smd = var.split(',')[0]
-                        smd = table_smds.loc[(var_smd), (col_name)]
-                        axes.text(-1, v, f'{smd}', ha='right', va='center', fontsize=8, color='black', fontweight='normal')
-                
-                axes.text(101, v, var, ha='left', va='center', fontsize=8, color='black', fontweight='normal')
-
-
-            if self.smds:
-                if coh > 0:
-                    color_smd = 'black'
-                    text_smd = f'SMD ({coh-1}, {coh})'
-                elif coh == 0:
-                    color_smd = 'white'
-                    text_smd = f'SMD (0, 0)'
-                
-                axes.text(-1, v + .75, text_smd, ha='right', va='center', fontsize=8, color=color_smd, fontweight='bold')
-
-            axes.set_yticks([])
-            axes.set_xticks([])
-            for spine in axes.spines.values():
-                spine.set_visible(False)
-
-            if coh == 0:
-                # move 'Missing' to the end of the legend
-                missing_idx = legend_labels.index('Missing')
-                legend_labels.append(legend_labels.pop(missing_idx))
-                legend_handles.append(legend_handles.pop(missing_idx))
-
-                # create a separate figure for the legend
-                legend_fig, legend_ax = plt.subplots(figsize=(len(legend_labels)/4, 1))  # Adjust figsize as necessary
-                legend_ax.axis('off')
-                fig_legend = legend_ax.legend(legend_handles, legend_labels, loc='center', ncol=1,
-                                            fontsize=8, frameon=False)
-
-                # save the legend figure
-                legend_fig.savefig('imgs/legend.svg', dpi=300, bbox_inches='tight')
-
-                # close the legend figure
-                plt.close(legend_fig)
-
-            plt.savefig(f'imgs/part{c}.svg', dpi=300, bbox_inches='tight')
-            plt.close()
-
-
-    def view(self):
-
-        # generate all auxiliary plots
-        if self.plot_dists:
-          self._plot_dists()
-        
-        dot = graphviz.Digraph(
-            comment='Cohort Exclusion Process',
-            format='svg',
-            graph_attr={'fontname': 'Helvetica', 'splines': 'ortho'},
-            node_attr={'shape': 'box', 'style': 'filled', 'fillcolor': 'white', 'fixedsize': 'true',
-                       'width': str(self.width), 'height': str(self.height), 'fontname': 'Helvetica'},  
-            edge_attr={'dir': 'forward', 'arrowhead': 'vee', 'arrowsize': '0.5', 'minlen': '1'},
-        )
-
-        columns = self.table_flows.columns.tolist()
-        num_columns = len(columns)
-
-        # Add main cohort nodes with initial counts
-        initial_counts = self.table_flows.loc['Initial, n']
-        for i, (count, column) in enumerate(zip(initial_counts, columns)):
-            node_label = self.cohort_labels[i].replace('___', f'{count}')
-            dot.node(f'A{i}', node_label, shape='box', fontname='Helvetica')
-
-        # Add final cohort node
-        final_node_label = self.cohort_labels[-1]
-        final_node_label = final_node_label.replace('___', f"{self.table_flows.loc['Result, n'].iloc[-1]}")
-        dot.node(f'A{num_columns}', final_node_label, shape='box', fontname='Helvetica')
-
-        if self.plot_dists:
-          # Add final distribution plot node
-          dot.node(f'plot_dist{num_columns}', label='',  image=f'part{num_columns}.svg',
-                  imagepos='bc',  imagescale='true',
-                  shape='box', color='transparent',
-                  width=str(self.width+0.5),
-                  height=str(self.height+0.2))
-
-          with dot.subgraph() as s:
-              s.attr(rank='same')
-              s.node(f'A{num_columns}')
-              s.node(f'plot_dist{num_columns}')
-
-        # Add exclusion criteria nodes with removed counts
-        removed_counts = self.table_flows.loc['Removed, n']
-        for i, (count, column) in enumerate(zip(removed_counts, columns)):
-            node_label = self.exclusion_labels[i].replace('___', f'{count}')
-            dot.node(f'E{i}', node_label, shape='box', style='filled', fillcolor='floralwhite')
-
-        # Add invisible nodes for positioning
-        for i in range(num_columns + 1):
-            dot.node(f'IA{i}', '', shape='point', height='0')
-
-        # connect the main cohort nodes
-        for i in range(num_columns):
-            dot.edge(f'A{i}', f'IA{i}', arrowhead='none')
-            dot.edge(f'IA{i}', f'A{i+1}', )
-
-        # connect the exclusion nodes to the hidden nodes
-        for i in range(num_columns):
-            dot.edge(f'IA{i}', f'E{i}', constraint='false')
-        
-        # Adjust ranks to position nodes horizontally for exclusions
-        for i in range(num_columns):
+            # Connect the final cohort node to the legend from the first exclusion edge
+            dot.edge(f'E0', 'legend', style='invis')
             with dot.subgraph() as s:
                 s.attr(rank='same')
-                s.node(f'IA{i}')
-                s.node(f'E{i}')
-
-        if self.plot_dists:
-          # Add boxes for the distributions``
-          for i in range(num_columns):
-              dot.node(f'plot_dist{i}', label='', image=f'part{i}.svg',
-                  imagepos='bc', imagescale='true',
-                  shape='box', color='transparent',
-                  width=str(self.width+0.75),
-                  height=str(self.height+0.2))
-              dot.edge(f'A{i}', f'plot_dist{i}', constraint='false', style='invis')
-              with dot.subgraph() as s:
-                  s.attr(rank='same')
-                  s.node(f'A{i}')
-                  s.node(f'plot_dist{i}')
-
-        if self.legend:
-          # Add a final node for the legend
-          dot.node('legend', label='', image=f'legend.svg', imagescale='true',
-                  shape='box', color='transparent',
-                  imagepos='bl',
-                  width=str(self.width),
-                  height=str(self.height+0.2))
-
-          # Connect the final cohort node to the legend from the first exclusion edge
-          dot.edge(f'E0', 'legend', style='invis')
-          with dot.subgraph() as s:
-              s.attr(rank='same')
-              s.node(f'E0')
-              s.node('legend')
+                s.node(f'E0')
+                s.node('legend')
         
         # Save and render the graph
-        dot.render(self.output_path, view=self.display, format='pdf')
-
-class NewFlowDiagram:
-    def __init__(self,
-                 table_flows: TableFlows,
-                 table_characteristics: TableCharacteristics = None,
-                 table_drifts: TableDrifts = None,
-                 new_cohort_labels: list = None,
-                 exclusion_labels: list = None,
-                 box_width: Optional[int] = 3.0,
-                 box_height: Optional[int] = 0.8,
-                 plot_dists: Optional[bool] = True,
-                 smds: Optional[bool] = True,
-                 legend: Optional[bool] = True,
-                 legend_with_vars: Optional[bool] = True,
-                 output_folder: Optional[str] = 'imgs',
-                 output_file: Optional[str] = 'flow_diagram',
-                 display_flow_diagram: Optional[bool] = True,
-                 # Visual parameters
-                 primary_color: Optional[str] = '#4682B4',  # Steel blue
-                 secondary_color: Optional[str] = '#F8F9F9',  # Very light gray
-                 text_color: Optional[str] = '#333333',  # Dark gray
-                 simple_diagram: Optional[bool] = False,
-                 title: Optional[str] = None,
-                 # New parameters for modern design
-                 modern_design: Optional[bool] = True,
-                 color_scheme: Optional[str] = 'blue',  # Options: blue, teal, purple, gray
-                 style: Optional[str] = 'minimal',  # Options: minimal, classic, gradient
-                 ):
-        """
-        Initialize FlowDiagram with tables and visualization options.
-        """
-        if (table_characteristics is None) & (plot_dists):
-            raise ValueError("table_characteristics must be provided if plot_dists is True")
+        output_path = os.path.join(self.output_folder, self.output_file)
+        dot.render(output_path, view=self.display, format='pdf')
         
-        if (table_drifts is None) & (smds):
-            raise ValueError("table_drifts must be provided if smds is True")
-        
-        self.table_flows = table_flows.view()
-        self.table_characteristics = table_characteristics
-        self.table_drifts = table_drifts
-    
-        if new_cohort_labels is None:
-            new_cohort_labels = [f'Cohort {i}\n___ subjects' for i in range(len(table_flows.view().columns))]
 
-        if exclusion_labels is None:
-            exclusion_labels = [f'Excluded: ___ subjects\n' for i in range(len(table_flows.view().columns))]
-
-        self.cohort_labels = new_cohort_labels
-        self.exclusion_labels = exclusion_labels
-        self.width = box_width
-        self.height = box_height
-        self.plot_dists = plot_dists
-        self.simple_diagram = simple_diagram
-        self.title = title
-        self.modern_design = modern_design
-        self.style = style
-        self.color_scheme = color_scheme
-
-        # Disable distribution plots if simple_diagram is True
-        if self.simple_diagram:
-            self.plot_dists = False
-            
-        if self.plot_dists == False:
-            self.smds = False
-            self.legend = legend
-            self.legend_with_vars = legend_with_vars
-        else:
-            self.smds = smds
-            self.legend = legend
-            self.legend_with_vars = legend_with_vars
-            
-        self.output_file = output_file
-        self.output_folder = output_folder
-        
-        # Create the imgs folder if it does not exist
-        if not os.path.exists(self.output_folder):
-            os.makedirs(self.output_folder)
-
-        self.output_path = os.path.join(self.output_folder, self.output_file)
-        self.display = display_flow_diagram
-        
-        # Apply color scheme
-        self._apply_color_scheme()
-        
-        # Font settings
-        if self.modern_design:
-            self.font_family = 'Helvetica'  # Clean modern font
-            self.font_size = 10
-            self.title_font_size = 14
-        else:
-            self.font_family = 'Arial'
-            self.font_size = 11
-            self.title_font_size = 14
-        
-        self.dpi = 300
-
-    def _apply_color_scheme(self):
-        """Apply selected color scheme for cohesive design."""
-        if self.color_scheme == 'blue':
-            # Blue color scheme - professional and clean
-            self.primary_color = '#2c3e50'  # Dark blue
-            self.secondary_color = '#f5f7fa'  # Light gray-blue
-            self.text_color = '#34495e'  # Dark blue-gray
-            self.edge_color = '#bdc3c7'  # Light gray
-            
-            # Color palette for bars - blue tones
-            self.color_palette = [
-                '#3498db',  # Bright blue
-                '#2980b9',  # Medium blue
-                '#5dade2',  # Light blue
-                '#85c1e9',  # Pale blue
-                '#aed6f1',  # Very light blue
-            ]
-            
-        elif self.color_scheme == 'teal':
-            # Teal color scheme - fresh and modern
-            self.primary_color = '#16a085'  # Teal
-            self.secondary_color = '#f0f6f6'  # Very light teal
-            self.text_color = '#2c3e50'  # Dark blue-gray
-            self.edge_color = '#d0d3d4'  # Light gray
-            
-            # Color palette for bars - teal tones
-            self.color_palette = [
-                '#1abc9c',  # Bright teal
-                '#16a085',  # Medium teal
-                '#48c9b0',  # Light teal
-                '#76d7c4',  # Pale teal
-                '#a3e4d7',  # Very light teal
-            ]
-            
-        elif self.color_scheme == 'purple':
-            # Purple color scheme - creative and distinctive
-            self.primary_color = '#8e44ad'  # Purple
-            self.secondary_color = '#f5f0f7'  # Very light purple
-            self.text_color = '#2c3e50'  # Dark blue-gray
-            self.edge_color = '#d5d8dc'  # Light gray
-            
-            # Color palette for bars - purple tones
-            self.color_palette = [
-                '#9b59b6',  # Bright purple
-                '#8e44ad',  # Medium purple
-                '#af7ac5',  # Light purple
-                '#c39bd3',  # Pale purple
-                '#d7bde2',  # Very light purple
-            ]
-            
-        elif self.color_scheme == 'gray':
-            # Gray color scheme - elegant and professional
-            self.primary_color = '#576574'  # Dark gray-blue
-            self.secondary_color = '#f8f9f9'  # Very light gray
-            self.text_color = '#2c3e50'  # Dark blue-gray
-            self.edge_color = '#bdc3c7'  # Light gray
-            
-            # Color palette for bars - gray tones
-            self.color_palette = [
-                '#7f8c8d',  # Medium gray
-                '#95a5a6',  # Light gray
-                '#aab7b8',  # Lighter gray
-                '#bfc9ca',  # Very light gray
-                '#d5dbdb',  # Palest gray
-            ]
-            
-        else:  # Default
-            self.primary_color = '#4682B4'  # Steel blue
-            self.secondary_color = '#F8F9F9'  # Very light gray
-            self.text_color = '#333333'  # Dark gray
-            self.edge_color = '#888888'  # Medium gray
-            
-            # Default color palette
-            self.color_palette = [
-                '#4682B4',  # Steel Blue
-                '#6495ED',  # Cornflower Blue
-                '#87CEEB',  # Sky Blue
-                '#ADD8E6',  # Light Blue
-                '#B0C4DE',  # Light Steel Blue
-            ]
-            
-        # Set background color based on style
-        if self.style == 'minimal':
-            self.background_color = 'white'
-        elif self.style == 'classic':
-            self.background_color = '#fafafa'  # Very light gray
-        else:  # gradient style handled differently
-            self.background_color = 'white'
-            
-        # Set SMD color to match primary color
-        self.smd_color = self.primary_color
-
-    def _is_dark_color(self, color):
-        """Determine if a color is dark (for choosing contrasting text color)."""
-        if color.startswith('#'):
-            # Convert hex to RGB and calculate luminance
-            r = int(color[1:3], 16) / 255.0
-            g = int(color[3:5], 16) / 255.0
-            b = int(color[5:7], 16) / 255.0
-            luminance = 0.299 * r + 0.587 * g + 0.114 * b
-            return luminance < 0.5
-        return False
-
-    def _plot_dists(self):
-        """Generate distribution plots for each cohort."""
-        import matplotlib.pyplot as plt
-        from matplotlib.patches import Rectangle
-        plt.rcParams['font.family'] = self.font_family
-        
-        # Extract data from table_characteristics
-        categorical = self.table_characteristics._renamed_categorical
-
-        table = self.table_characteristics.view()
-        if self.smds:
-          table_smds = self.table_drifts.view_simple()
-
-        vars = table.loc[
-            table.index.get_level_values(0) != 'Overall'
-        ].index.get_level_values(0).unique().tolist()
-
-        cohorts = table.columns.get_level_values(1).unique().tolist()
-
-        # Extend color palette if needed
-        while len(self.color_palette) < max(5, len(categorical)):
-            import colorsys
-            h, s, v = colorsys.rgb_to_hsv(
-                int(self.primary_color[1:3], 16) / 255.0,
-                int(self.primary_color[3:5], 16) / 255.0,
-                int(self.primary_color[5:7], 16) / 255.0
-            )
-            # Generate more colors by varying hue
-            new_colors = []
-            for i in range(len(self.color_palette)):
-                new_h = (h + (i + 1) * 0.1) % 1.0
-                r, g, b = colorsys.hsv_to_rgb(new_h, s * 0.9, v * 0.9)
-                new_colors.append(f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}")
-            self.color_palette.extend(new_colors)
-
-        # Define the legend handles
-        legend_handles = []
-        legend_labels = []
-
-        # Iterate through Cohort number
-        for c, coh in enumerate(cohorts):
-            fig, axes = plt.subplots(1, 1, figsize=(4, 2), dpi=self.dpi)
-            
-            # Iterate through variables
-            for v, var in enumerate(vars):
-                
-                if var in categorical:
-                    values_names = table.loc[
-                        table.index.get_level_values(0) == var
-                    ].index.get_level_values(1)
-
-                    cum_width = 0
-                    for i, val in enumerate(values_names):
-                        value = table.loc[(var, val), ('Cohort', coh)]
-                        if val != 'Missing':
-                            color_idx = i % len(self.color_palette)
-                            
-                            # Apply style
-                            if self.style == 'gradient':
-                                # Create lighter version for gradient
-                                import colorsys
-                                h, s, v = colorsys.rgb_to_hsv(
-                                    int(self.color_palette[color_idx][1:3], 16) / 255.0,
-                                    int(self.color_palette[color_idx][3:5], 16) / 255.0,
-                                    int(self.color_palette[color_idx][5:7], 16) / 255.0
-                                )
-                                r, g, b = colorsys.hsv_to_rgb(h, s * 0.7, min(1.0, v * 1.3))
-                                end_color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
-                                
-                                # Create gradient patch manually
-                                import matplotlib.colors as mcolors
-                                import numpy as np
-                                
-                                # Create color map for the gradient
-                                cmap = mcolors.LinearSegmentedColormap.from_list(
-                                    "custom", [self.color_palette[color_idx], end_color], N=256)
-                                
-                                # Draw rectangle with gradient
-                                z = np.array([[0, 1]])
-                                bar_width = value
-                                bar_height = 0.8
-                                im = axes.imshow(z, aspect='auto', cmap=cmap,
-                                               extent=[cum_width, cum_width + bar_width, v - bar_height/2, v + bar_height/2])
-                                
-                                # Add to legend
-                                if coh == 0:
-                                    box = Rectangle((0, 0), 1, 1, facecolor=self.color_palette[color_idx], edgecolor='none')
-                                    legend_handles.append(box)
-                                    if self.legend_with_vars:
-                                        legend_labels.append(f"{var}: {val}")
-                                    else:
-                                        legend_labels.append(val)
-                            else:
-                                # Standard bar with slight border for definition
-                                bar = axes.barh(v, value, left=cum_width, height=.8, 
-                                             color=self.color_palette[color_idx], 
-                                             edgecolor='white', linewidth=0.5)
-                                
-                                if coh == 0:
-                                    legend_handles.append(bar[0])
-                                    if self.legend_with_vars:
-                                        legend_labels.append(f"{var}: {val}")
-                                    else:
-                                        legend_labels.append(val)
-                            
-                            textcolor = 'white' if self._is_dark_color(self.color_palette[color_idx]) else self.text_color
-                        else:
-                            # Special styling for missing values
-                            if self.modern_design:
-                                # Modern styling for missing - diagonal lines
-                                bar = axes.barh(v, value, left=cum_width, height=.8, 
-                                             color='#f2f2f2', edgecolor='#e0e0e0',
-                                             hatch='////', linewidth=0.5)
-                            else:
-                                bar = axes.barh(v, value, left=cum_width, height=.8, 
-                                             color='lightgray', hatch='///', 
-                                             edgecolor='white')
-                            
-                            textcolor = self.text_color
-                            if (coh == 0) & ('Missing' not in legend_labels):
-                                legend_handles.append(bar[0])
-                                legend_labels.append('Missing')
-
-                        if value > 5:
-                            axes.text(cum_width + value/2, v, '{:.1f}'.format(value),
-                                    ha='center', va='center', color=textcolor, 
-                                    fontsize=self.font_size, fontfamily=self.font_family,
-                                    fontweight='light' if self.modern_design else 'normal')
-                        cum_width += value
-                        
-                    if (coh > 0) & (self.smds):
-                        col_name = f"{coh-1} to {coh}"
-                        var_smd = var.split(',')[0]
-                        
-                        # Only try to get SMD if the variable exists in table_smds
-                        if var_smd in table_smds.index:
-                            smd = table_smds.loc[var_smd, (col_name)]
-                            
-                            # Modern styling for SMD values based on magnitude
-                            try:
-                                smd_float = float(smd)
-                                if smd_float < 0.1:
-                                    weight = 'normal'
-                                    style = 'normal'
-                                elif smd_float < 0.2:
-                                    weight = 'medium'
-                                    style = 'normal'
-                                else:
-                                    weight = 'bold'
-                                    style = 'normal'
-                                
-                                axes.text(-1, v, f'{smd}', ha='right', va='center', 
-                                        fontsize=self.font_size, color=self.smd_color, 
-                                        fontweight=weight, fontstyle=style,
-                                        fontfamily=self.font_family)
-                            except:
-                                axes.text(-1, v, f'{smd}', ha='right', va='center', 
-                                        fontsize=self.font_size, color=self.smd_color, 
-                                        fontweight='normal', fontfamily=self.font_family)
-
-                else:
-                    val = ' '
-                    value = table.loc[(var, val), ('Cohort', coh)]
-                    # Use a lighter tone for continuous variables
-                    cont_color = self.color_palette[-1]
-                    
-                    if self.style == 'gradient':
-                        # Create subtle gradient for continuous variables
-                        import matplotlib.colors as mcolors
-                        import numpy as np
-                        
-                        # Determine lighter shade for gradient
-                        import colorsys
-                        h, s, v = colorsys.rgb_to_hsv(
-                            int(cont_color[1:3], 16) / 255.0,
-                            int(cont_color[3:5], 16) / 255.0,
-                            int(cont_color[5:7], 16) / 255.0
-                        )
-                        r, g, b = colorsys.hsv_to_rgb(h, s * 0.5, min(1.0, v * 1.3))
-                        end_color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
-                        
-                        # Create gradient
-                        cmap = mcolors.LinearSegmentedColormap.from_list(
-                            "custom", [cont_color, end_color], N=256)
-                        
-                        z = np.array([[0, 1]])
-                        im = axes.imshow(z, aspect='auto', cmap=cmap,
-                                       extent=[0, 100, v - 0.4, v + 0.4])
-                    else:
-                        axes.barh(v, 100, left=0, height=.8, color=cont_color, 
-                                 edgecolor='white', linewidth=0.5)
-                    
-                    axes.text(50, v, f"{value}", ha='center', va='center', 
-                             color=self.text_color, fontsize=self.font_size, 
-                             fontfamily=self.font_family,
-                             fontweight='light' if self.modern_design else 'normal')
-                    
-                    if (coh > 0) & (val != 'Missing') & (self.smds):
-                        col_name = f"{coh-1} to {coh}"
-                        var_smd = var.split(',')[0]
-                        
-                        # Only try to get SMD if the variable exists in table_smds
-                        if var_smd in table_smds.index:
-                            smd = table_smds.loc[(var_smd), (col_name)]
-                            axes.text(-1, v, f'{smd}', ha='right', va='center', 
-                                     fontsize=self.font_size, color=self.smd_color, 
-                                     fontweight='normal', fontfamily=self.font_family)
-                
-                # Variable label on the right - no background
-                axes.text(101, v, var, ha='left', va='center', 
-                         fontsize=self.font_size, color=self.text_color, 
-                         fontweight='normal', fontfamily=self.font_family)
-
-            if self.smds:
-                if coh > 0:
-                    color_smd = self.text_color
-                    text_smd = f'SMD ({coh-1}, {coh})'
-                elif coh == 0:
-                    color_smd = 'white'
-                    text_smd = f'SMD (0, 0)'
-                
-                axes.text(-1, v + .75, text_smd, ha='right', va='center', 
-                         fontsize=self.font_size, color=color_smd, 
-                         fontweight='bold', fontfamily=self.font_family)
-
-            # Clean up plot
-            axes.set_yticks([])
-            axes.set_xticks([])
-            for spine in axes.spines.values():
-                spine.set_visible(False)
-
-            # Set figure background
-            fig.patch.set_facecolor('none')  # Transparent background
-            axes.set_facecolor('none')  # Transparent background
-
-            if coh == 0 and self.legend and legend_handles:
-                # move 'Missing' to the end of the legend
-                if 'Missing' in legend_labels:
-                    missing_idx = legend_labels.index('Missing')
-                    legend_labels.append(legend_labels.pop(missing_idx))
-                    legend_handles.append(legend_handles.pop(missing_idx))
-
-                # Create a modern, clean legend with better spacing and layout
-                legend_fig, legend_ax = plt.subplots(
-                    figsize=(len(legend_labels)/3, 0.5), # wider, shorter figure
-                    tight_layout=True
-                )
-                legend_ax.axis('off')
-                
-                # Set transparent background
-                legend_ax.patch.set_alpha(0)
-                legend_fig.patch.set_alpha(0)
-                
-                # Create a more elegantly styled legend
-                if self.modern_design:
-                    # Multi-column layout for cleaner appearance
-                    columns = min(4, max(2, len(legend_labels) // 3 + 1))
-                    
-                    # Custom function to handle legend element spacing
-                    def get_legend_elements():
-                        elements = []
-                        for handle, label in zip(legend_handles, legend_labels):
-                            elements.append((handle, label))
-                        return elements
-                    
-                    # Create custom legend with improved spacing
-                    from matplotlib.legend_handler import HandlerBase
-                    
-                    class ImprovedHandler(HandlerBase):
-                        def create_artists(self, legend, orig_handle, xdescent, ydescent, width, height, fontsize, trans):
-                            return [orig_handle]
-                    
-                    # Use a horizontal layout with more space between items
-                    legend = legend_ax.legend(
-                        *zip(*get_legend_elements()),
-                        loc='center',
-                        ncol=columns,
-                        frameon=False,
-                        fontsize=self.font_size,
-                        handletextpad=0.8,  # space between handle and text
-                        columnspacing=1.5,  # space between columns
-                        handlelength=1.2,   # shorter handles
-                    )
-                    
-                    # Adjust text properties for modern look
-                    for text in legend.get_texts():
-                        text.set_fontweight('light')
-                        text.set_fontfamily(self.font_family)
-                else:
-                    # Standard legend with improved spacing
-                    legend = legend_ax.legend(
-                        legend_handles, 
-                        legend_labels,
-                        loc='center', 
-                        ncol=len(legend_labels)//3 + 1,
-                        fontsize=self.font_size,
-                        frameon=False
-                    )
-
-                # Save with transparent background and improved padding
-                legend_path = os.path.join(os.path.abspath(self.output_folder), 'legend.svg')
-                legend_fig.tight_layout(pad=0.1)  # reduce padding
-                legend_fig.savefig(legend_path, dpi=self.dpi, 
-                                 bbox_inches='tight', 
-                                 transparent=True)  # Transparent background
-
-                plt.close(legend_fig)
-
-            # Save with transparent background
-            part_path = os.path.join(os.path.abspath(self.output_folder), f'part{c}.svg')
-            plt.savefig(part_path, dpi=self.dpi, 
-                       bbox_inches='tight', 
-                       transparent=True)  # Transparent background
-            plt.close()
-
-    def view(self):
-        """Generate and display the flow diagram."""
-        # Generate all auxiliary plots if needed and not using simple diagram
-        if self.plot_dists and not self.simple_diagram:
-            try:
-                self._plot_dists()
-            except Exception as e:
-                print(f"Warning: Error generating distribution plots: {e}")
-                print("Falling back to simple diagram mode without SVG images")
-                self.simple_diagram = True
-                self.plot_dists = False
-        
-        # Create the graph with modern settings
-        import graphviz
-        
-        # Apply style-specific graph attributes
-        graph_attrs = {
-            'fontname': self.font_family, 
-            'splines': 'ortho',  # Use orthogonal lines
-            'bgcolor': self.background_color,
-            'rankdir': 'TB',  # Top to bottom (vertical) layout
-            'fontsize': str(self.font_size),
-            'fontcolor': self.text_color,
-            'nodesep': '0.8',  # More space between nodes horizontally
-            'ranksep': '0.8',  # More space between ranks vertically
-            'pad': '0.5',  # Padding
-        }
-        
-        # Modern design improvements
-        if self.modern_design:
-            if self.style == 'minimal':
-                graph_attrs.update({
-                    'splines': 'spline',  # Smoother edges
-                    'ranksep': '1.0',     # More vertical spacing
-                    'concentrate': 'true', # Merge edges
-                    'overlap': 'false',    # Prevent node overlap
-                })
-            elif self.style == 'gradient':
-                graph_attrs.update({
-                    'splines': 'ortho',    # Sharp edges
-                    'nodesep': '1.0',      # More horizontal spacing
-                    'margin': '0.2',       # Smaller margins
-                })
-                
-        # Create the digraph with appropriate attributes
-        dot = graphviz.Digraph(
-            comment='Cohort Selection Flow',
-            format='svg',
-            graph_attr=graph_attrs,
-            node_attr={
-                'shape': 'box', 
-                'style': 'filled,rounded',  # Rounded boxes
-                'fontname': self.font_family,
-                'fontsize': str(self.font_size),
-                'height': str(self.height),
-                'width': str(self.width),
-                'margin': '0.2,0.1',  # Text margin inside nodes
-                'penwidth': '1.5',  # Border width to ensure corners show properly
-            },  
-            edge_attr={
-                'color': self.edge_color,
-                'penwidth': '1.5',  # Slightly thicker edges for visibility
-                'arrowsize': '0.8',  # Larger arrows
-                'minlen': '1',       # Minimum edge length
-            },
-        )
-
-        columns = self.table_flows.columns.tolist()
-        num_columns = len(columns)
-
-        # Add main cohort nodes with initial counts
-        initial_counts = self.table_flows.loc['Initial, n']
-        for i, (count, column) in enumerate(zip(initial_counts, columns)):
-            node_label = self.cohort_labels[i].replace('___', f'{count}')
-            
-            # Apply style variants to nodes
-            if self.style == 'gradient' and self.modern_design:
-                # Create gradient fill for primary nodes
-                import colorsys
-                h, s, v = colorsys.rgb_to_hsv(
-                    int(self.primary_color[1:3], 16) / 255.0,
-                    int(self.primary_color[3:5], 16) / 255.0,
-                    int(self.primary_color[5:7], 16) / 255.0
-                )
-                r, g, b = colorsys.hsv_to_rgb(h, s * 0.9, min(1.0, v * 1.2))
-                end_color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
-                
-                dot.node(f'A{i}', node_label,
-                        style='filled,rounded',
-                        fillcolor=f"{self.primary_color}:{end_color}",
-                        gradientangle='270',
-                        fontcolor='white' if self._is_dark_color(self.primary_color) else 'black')
-            else:
-                dot.node(f'A{i}', node_label, 
-                        fillcolor=self.primary_color,
-                        fontcolor='white' if self._is_dark_color(self.primary_color) else 'black')
-
-        # Add final cohort node
-        final_node_label = self.cohort_labels[-1]
-        final_node_label = final_node_label.replace('___', f"{self.table_flows.loc['Result, n'].iloc[-1]}")
-        
-        if self.style == 'gradient' and self.modern_design:
-            # Create gradient fill for final node
-            import colorsys
-            h, s, v = colorsys.rgb_to_hsv(
-                int(self.primary_color[1:3], 16) / 255.0,
-                int(self.primary_color[3:5], 16) / 255.0,
-                int(self.primary_color[5:7], 16) / 255.0
-            )
-            r, g, b = colorsys.hsv_to_rgb(h, s * 0.9, min(1.0, v * 1.2))
-            end_color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
-            
-            dot.node(f'A{num_columns}', final_node_label,
-                    style='filled,rounded',
-                    fillcolor=f"{self.primary_color}:{end_color}",
-                    gradientangle='270',
-                    fontcolor='white' if self._is_dark_color(self.primary_color) else 'black')
-        else:
-            dot.node(f'A{num_columns}', final_node_label, 
-                    fillcolor=self.primary_color,
-                    fontcolor='white' if self._is_dark_color(self.primary_color) else 'black')
-
-        # Add exclusion criteria nodes with removed counts
-        removed_counts = self.table_flows.loc['Removed, n']
-        for i, (count, column) in enumerate(zip(removed_counts, columns)):
-            node_label = self.exclusion_labels[i].replace('___', f'{count}')
-            
-            if self.style == 'gradient' and self.modern_design:
-                # Create subtle gradient for exclusion nodes
-                import colorsys
-                h, s, v = colorsys.rgb_to_hsv(
-                    int(self.secondary_color[1:3], 16) / 255.0,
-                    int(self.secondary_color[3:5], 16) / 255.0,
-                    int(self.secondary_color[5:7], 16) / 255.0
-                )
-                r, g, b = colorsys.hsv_to_rgb(h, s * 1.1, max(0.0, v * 0.95))
-                end_color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
-                
-                dot.node(f'E{i}', node_label,
-                        style='filled,rounded',
-                        fillcolor=f"{self.secondary_color}:{end_color}",
-                        gradientangle='270',
-                        fontcolor=self.text_color)
-            else:
-                dot.node(f'E{i}', node_label, 
-                        fillcolor=self.secondary_color,
-                        fontcolor=self.text_color)
-
-        # Connect the nodes
-        # First connect all main cohort nodes in sequence
-        for i in range(num_columns):
-            dot.edge(f'A{i}', f'A{i+1}')
-        
-        # Then connect exclusions to the right of each cohort node
-        for i in range(num_columns):
-            dot.edge(f'A{i}', f'E{i}')
-            
-        # Place exclusion nodes at same rank as their corresponding cohort
-        for i in range(num_columns):
-            with dot.subgraph() as s:
-                s.attr(rank='same')
-                s.node(f'A{i}')
-                s.node(f'E{i}')
-
-        # Add distribution plot nodes if enabled
-        if self.plot_dists and not self.simple_diagram:
-            for i in range(num_columns + 1):
-                part_path = os.path.join(os.path.abspath(self.output_folder), f'part{i}.svg')
-                if os.path.exists(part_path):
-                    # Place plots to the left of cohort nodes
-                    dot.node(f'plot_dist{i}', label='', 
-                            image=part_path,
-                            imagepos='ml',  # Left middle position
-                            imagescale='true',
-                            shape='none',   # No shape around image
-                            margin='0')
-                    
-                    with dot.subgraph() as s:
-                        s.attr(rank='same')
-                        s.node(f'A{i}')
-                        s.node(f'plot_dist{i}')
-                    
-                    # Connect with invisible edge to maintain position
-                    dot.edge(f'plot_dist{i}', f'A{i}', style='invis')
-
-        # Add legend with modern styling if enabled
-        if self.legend and not self.simple_diagram:
-            legend_path = os.path.join(os.path.abspath(self.output_folder), 'legend.svg')
-            if os.path.exists(legend_path):
-                # Create a better positioned modern legend
-                if self.modern_design:
-                    # Place legend at bottom center with more style
-                    dot.node('legend', label='', 
-                            image=legend_path, 
-                            imagepos='bc',  # Bottom center
-                            imagescale='true',
-                            shape='none',   # No shape around image
-                            margin='0')
-                    
-                    # Place legend below using specific positioning
-                    with dot.subgraph() as s:
-                        s.attr(rank='sink')  # Force to bottom
-                        s.node('legend')
-                    
-                    # Connect with invisible edge to final node for better positioning
-                    dot.edge(f'A{num_columns}', 'legend', style='invis', weight='0.1')
-                else:
-                    # Standard legend positioning
-                    dot.node('legend', label='', 
-                            image=legend_path, 
-                            imagepos='bc',  # Bottom center
-                            imagescale='true',
-                            shape='plaintext',  # No box around the image
-                            margin='0')
-                    
-                    # Place legend below final cohort
-                    with dot.subgraph() as s:
-                        s.attr(rank='sink')  # Force to bottom
-                        s.node('legend')
-                    
-                    # Connect with invisible edge
-                    dot.edge(f'A{num_columns}', 'legend', style='invis')
-        
-        # Add a title with modern styling if specified
-        if self.title:
-            if self.modern_design:
-                # Modern, cleaner title styling
-                dot.attr(label=self.title, 
-                       labelloc='t', 
-                       fontsize=str(self.title_font_size),
-                       fontname=self.font_family, 
-                       fontcolor=self.text_color)
-            else:
-                # Standard title
-                dot.attr(label=self.title, 
-                       labelloc='t', 
-                       fontsize=str(self.title_font_size),
-                       fontname=self.font_family, 
-                       fontcolor=self.text_color)
-        
-        # Save and render the graph
-        try:
-            # Generate SVG first
-            dot.render(self.output_path, view=False, format='svg')
-            
-            # Try to generate PDF if requested
-            try:
-                dot.render(self.output_path, view=self.display, format='pdf')
-                print(f"Diagram saved to: {self.output_path}.pdf")
-            except Exception as e:
-                print(f"Warning: Could not generate PDF, falling back to SVG only: {e}")
-                print(f"Diagram saved to: {self.output_path}.svg")
-        except Exception as e:
-            print(f"Error rendering diagram: {e}")
-            print("Try using simple_diagram=True parameter for a more reliable output")
-
-
-from typing import Optional, Union, List, Dict, Any, Tuple, Callable
-import pandas as pd
-import numpy as np
-import os
-import inspect
-import re
 
 class EasyFlow:
     """
