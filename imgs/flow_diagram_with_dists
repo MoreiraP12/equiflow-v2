@@ -1,41 +1,41 @@
 // Cohort Exclusion Process
 digraph {
 	graph [fontname=Helvetica splines=ortho]
-	node [fillcolor=white fixedsize=true fontname=Helvetica height=1 shape=box style=filled width=2.5]
+	node [fixedsize=true fontname=Helvetica height=1 shape=box style=filled width=2.5]
 	edge [arrowhead=vee arrowsize=0.5 dir=forward minlen=1]
 	A0 [label="1,000 patients
-Initial Cohort" fontname=Helvetica shape=box]
-	A1 [label="883 patients
-Age ≥ 50" fontname=Helvetica shape=box]
-	A2 [label="837 patients
-Complete lab data" fontname=Helvetica shape=box]
-	A3 [label="670 patients
-Non-smokers" fontname=Helvetica shape=box]
+Initial Patient Cohort" fillcolor=white fontname=Helvetica shape=box style=filled]
+	A1 [label="999 patients
+Adult Patients" fillcolor=white fontname=Helvetica shape=box style=filled]
+	A2 [label="969 patients
+Complete BMI Data" fillcolor=white fontname=Helvetica shape=box style=filled]
+	A3 [label="923 patients
+Normal Lab Values" fillcolor=white fontname=Helvetica shape=box style=filled]
 	plot_dist3 [label="" color=transparent height=1.2 image="part3.svg" imagepos=bc imagescale=true shape=box width=3.0]
 	{
 		rank=same
 		A3
 		plot_dist3
 	}
-	E0 [label="117 patients excluded for
-Age < 50" fillcolor=floralwhite shape=box style=filled]
-	E1 [label="46 patients excluded for
-Missing lab values" fillcolor=floralwhite shape=box style=filled]
-	E2 [label="167 patients excluded for
-Current smokers" fillcolor=floralwhite shape=box style=filled]
+	E0 [label="1 patients excluded for
+Age < 18" fillcolor="#f5f5f5" shape=box style=filled]
+	E1 [label="30 patients excluded for
+Missing BMI" fillcolor="#f5f5f5" shape=box style=filled]
+	E2 [label="46 patients excluded for
+Lab value > 5" fillcolor="#f5f5f5" shape=box style=filled]
 	IA0 [label="" height=0 shape=point]
 	IA1 [label="" height=0 shape=point]
 	IA2 [label="" height=0 shape=point]
 	IA3 [label="" height=0 shape=point]
-	A0 -> IA0 [arrowhead=none]
-	IA0 -> A1
-	A1 -> IA1 [arrowhead=none]
-	IA1 -> A2
-	A2 -> IA2 [arrowhead=none]
-	IA2 -> A3
-	IA0 -> E0 [constraint=false]
-	IA1 -> E1 [constraint=false]
-	IA2 -> E2 [constraint=false]
+	A0 -> IA0 [arrowhead=none color=black]
+	IA0 -> A1 [color=black]
+	A1 -> IA1 [arrowhead=none color=black]
+	IA1 -> A2 [color=black]
+	A2 -> IA2 [arrowhead=none color=black]
+	IA2 -> A3 [color=black]
+	IA0 -> E0 [color=black constraint=false]
+	IA1 -> E1 [color=black constraint=false]
+	IA2 -> E2 [color=black constraint=false]
 	{
 		rank=same
 		IA0
