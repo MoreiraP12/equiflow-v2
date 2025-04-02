@@ -1811,7 +1811,7 @@ class FlowDiagram:
                         cum_width += value
                     
                     # Add missing values at the end if present
-                    if 'Missing' in table.loc[table.index.get_level_values(0) == var].index.get_level_values(1):
+                    if ('Missing' or "NA") in table.loc[table.index.get_level_values(0) == var].index.get_level_values(1):
                         missing_value = table.loc[(var, 'Missing'), ('Cohort', coh)]
                         
                         # Convert to numeric if needed

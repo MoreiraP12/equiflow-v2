@@ -1,41 +1,33 @@
 // Cohort Exclusion Process
 digraph {
 	graph [fontname=Helvetica splines=ortho]
-	node [fixedsize=true fontname=Helvetica height=1.5 shape=box style=filled width=3.5]
+	node [fixedsize=true fontname=Helvetica height=1 shape=box style=filled width=2.5]
 	edge [arrowhead=vee arrowsize=0.5 dir=forward minlen=1]
-	A0 [label="1,000 patients
+	A0 [label="30,419 patients
 Initial Patient Cohort" fillcolor=white fontname=Helvetica shape=box style=filled]
-	A1 [label="991 patients
+	A1 [label="30,416 patients
 Adult Patients" fillcolor=white fontname=Helvetica shape=box style=filled]
-	A2 [label="942 patients
+	A2 [label="18,836 patients
 Complete Race Data" fillcolor=white fontname=Helvetica shape=box style=filled]
-	A3 [label="937 patients
-Final Analysis Cohort" fillcolor=white fontname=Helvetica shape=box style=filled]
-	plot_dist3 [label="" color=transparent height=1.7 image="/Users/pedro/Desktop/equiflow-v2/test_output/imgs/part3.svg" imagepos=bc imagescale=true shape=box width=4.0]
+	plot_dist2 [label="" color=transparent height=1.2 image="/Users/pedro/Desktop/equiflow-v2/test_output/imgs/part2.svg" imagepos=bc imagescale=true shape=box width=3.0]
 	{
 		rank=same
-		A3
-		plot_dist3
+		A2
+		plot_dist2
 	}
-	E0 [label="9 patients excluded for
+	E0 [label="3 patients excluded for
 Age < 18 years" fillcolor=floralwhite shape=box style=filled]
-	E1 [label="49 patients excluded for
+	E1 [label="11,580 patients excluded for
 Missing race data" fillcolor=floralwhite shape=box style=filled]
-	E2 [label="5 patients excluded for
-BMI outside range 15-50" fillcolor=floralwhite shape=box style=filled]
 	IA0 [label="" height=0 shape=point]
 	IA1 [label="" height=0 shape=point]
 	IA2 [label="" height=0 shape=point]
-	IA3 [label="" height=0 shape=point]
 	A0 -> IA0 [arrowhead=none color=black]
 	IA0 -> A1 [color=black]
 	A1 -> IA1 [arrowhead=none color=black]
 	IA1 -> A2 [color=black]
-	A2 -> IA2 [arrowhead=none color=black]
-	IA2 -> A3 [color=black]
 	IA0 -> E0 [color=black constraint=false]
 	IA1 -> E1 [color=black constraint=false]
-	IA2 -> E2 [color=black constraint=false]
 	{
 		rank=same
 		IA0
@@ -46,33 +38,21 @@ BMI outside range 15-50" fillcolor=floralwhite shape=box style=filled]
 		IA1
 		E1
 	}
-	{
-		rank=same
-		IA2
-		E2
-	}
-	plot_dist0 [label="" color=transparent height=1.7 image="/Users/pedro/Desktop/equiflow-v2/test_output/imgs/part0.svg" imagepos=bc imagescale=true shape=box width=4.25]
+	plot_dist0 [label="" color=transparent height=1.2 image="/Users/pedro/Desktop/equiflow-v2/test_output/imgs/part0.svg" imagepos=bc imagescale=true shape=box width=3.25]
 	A0 -> plot_dist0 [constraint=false style=invis]
 	{
 		rank=same
 		A0
 		plot_dist0
 	}
-	plot_dist1 [label="" color=transparent height=1.7 image="/Users/pedro/Desktop/equiflow-v2/test_output/imgs/part1.svg" imagepos=bc imagescale=true shape=box width=4.25]
+	plot_dist1 [label="" color=transparent height=1.2 image="/Users/pedro/Desktop/equiflow-v2/test_output/imgs/part1.svg" imagepos=bc imagescale=true shape=box width=3.25]
 	A1 -> plot_dist1 [constraint=false style=invis]
 	{
 		rank=same
 		A1
 		plot_dist1
 	}
-	plot_dist2 [label="" color=transparent height=1.7 image="/Users/pedro/Desktop/equiflow-v2/test_output/imgs/part2.svg" imagepos=bc imagescale=true shape=box width=4.25]
-	A2 -> plot_dist2 [constraint=false style=invis]
-	{
-		rank=same
-		A2
-		plot_dist2
-	}
-	legend [label="" color=transparent height=1.7 image="/Users/pedro/Desktop/equiflow-v2/test_output/imgs/legend.svg" imagepos=bl imagescale=true shape=box width=3.5]
+	legend [label="" color=transparent height=1.2 image="/Users/pedro/Desktop/equiflow-v2/test_output/imgs/legend.svg" imagepos=bl imagescale=true shape=box width=2.5]
 	E0 -> legend [style=invis]
 	{
 		rank=same
