@@ -1977,8 +1977,8 @@ class FlowDiagram:
             dot.node(f'plot_dist{num_columns}', label='',  image=img_path,
                     imagepos='bc',  imagescale='true',
                     shape='box', color='transparent',
-                    width=str(self.width+0.5),
-                    height=str(self.height+0.2))
+                    width=str(self.width+1.25),
+                    height=str(self.height+0.7))
 
             with dot.subgraph() as s:
                 s.attr(rank='same')
@@ -2018,8 +2018,8 @@ class FlowDiagram:
                 dot.node(f'plot_dist{i}', label='', image=img_path,
                     imagepos='bc', imagescale='true',
                     shape='box', color='transparent',
-                    width=str(self.width+0.75),
-                    height=str(self.height+0.2))
+                    width=str(self.width+ 1.25),
+                    height=str(self.height+ 0.7))
                 dot.edge(f'A{i}', f'plot_dist{i}', constraint='false', style='invis')
                 with dot.subgraph() as s:
                     s.attr(rank='same')
@@ -2032,8 +2032,8 @@ class FlowDiagram:
             dot.node('legend', label='', image=legend_path, imagescale='true',
                     shape='box', color='transparent',
                     imagepos='bl',
-                    width=str(self.width),
-                    height=str(self.height+0.2))
+                    width=str(self.width + 1),
+                    height=str(self.height+ 1.2))
 
             # Connect the final cohort node to the legend from the first exclusion edge
             dot.edge(f'E0', 'legend', style='invis')
