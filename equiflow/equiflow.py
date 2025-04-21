@@ -118,19 +118,15 @@ class EquiFlow:
 
   # method to categorize missing values under the same label
   def _clean_missing(self): 
-    
     for i, df in enumerate(self._dfs):
-
-      # map all missing values possibilities to Null
-      df = df.replace(['', ' ', 'NA', 'N/A', 'na', 'n/a',
-                      'NA ', 'N/A ', 'na ', 'n/a ', 'NaN',
-                      'nan', 'NAN', 'Nan', 'N/A;', '<NA>',
-                      "_", '__', '___', '____', '_____',
-                      'NaT', 'None', 'none', 'NONE', 'Null',
-                      'null', 'NULL', 'missing', 'Missing',
-                      np.nan, pd.NA], None)
-  
-    self._dfs[i] = df
+        # map all missing values directly without creating a new local variable
+        self._dfs[i] = df.replace(['', ' ', 'NA', 'N/A', 'na', 'n/a',
+                     'NA ', 'N/A ', 'na ', 'n/a ', 'NaN',
+                     'nan', 'NAN', 'Nan', 'N/A;', '<NA>',
+                     "_", '__', '___', '____', '_____',
+                     'NaT', 'None', 'none', 'NONE', 'Null',
+                     'null', 'NULL', 'missing', 'Missing',
+                     np.nan, pd.NA], None)
       
 
  
@@ -622,7 +618,6 @@ class EquiFlow:
         output_folder=output_folder,
         output_file=output_file,
         display_flow_diagram=display_flow_diagram,
-        # Pass the color customization parameters to FlowDiagram
         cohort_node_color=cohort_node_color,
         exclusion_node_color=exclusion_node_color,
         categorical_bar_colors=categorical_bar_colors,
@@ -1698,6 +1693,8 @@ class FlowDiagram:
         import os
         import matplotlib.pyplot as plt
         import numpy as np
+        import matplotlib.cm as cm
+        import matplotlib.colors as mcolors
         
         # Ensure output directories exist
         imgs_dir = os.path.join(self.output_folder, 'imgs')
@@ -1707,7 +1704,7 @@ class FlowDiagram:
         orig_dir = os.getcwd()
         
         # Extract data from table_characteristics
-        categorical = self.table_characteristics._categorical  # Use _categorical directly
+        categorical = self.table_characteristics._categorical
         
         table = self.table_characteristics.view()
         if self.smds:
@@ -1720,6 +1717,14 @@ class FlowDiagram:
 
         # Get all cohorts
         cohorts = table.columns.get_level_values(1).unique().tolist()
+
+        # Create color palettes for variables
+        var_colors = {}
+        for i, var in enumerate(categorical):
+            # Assign a base color from tab10 colormap
+            base_cmap = cm.get_cmap('tab10')
+            base_color = base_cmap(i % 10)
+            var_colors[var] = base_color
 
         # Define the legend handles and labels
         legend_handles = []
@@ -1785,11 +1790,33 @@ class FlowDiagram:
                             except:
                                 value = 0
                         
-                        # Use custom colors if provided
-                        if self.categorical_bar_colors and val_idx < len(self.categorical_bar_colors):
+                        # Use consistent color shades for the same variable
+                        if isinstance(self.categorical_bar_colors, dict) and var_original in self.categorical_bar_colors:
+                            # Use custom color mapping provided for this variable
+                            color_list = self.categorical_bar_colors[var_original]
+                            if val_idx < len(color_list):
+                                color = color_list[val_idx]
+                                bar = axes.barh(v, value, left=cum_width, height=.8, color=color, edgecolor='white')
+                            else:
+                                # Use a default color if index exceeds provided colors
+                                bar = axes.barh(v, value, left=cum_width, height=.8, edgecolor='white')
+                        elif self.categorical_bar_colors and isinstance(self.categorical_bar_colors, list) and val_idx < len(self.categorical_bar_colors):
+                            # Use the flat list of colors (original behavior)
                             color = self.categorical_bar_colors[val_idx]
                             bar = axes.barh(v, value, left=cum_width, height=.8, color=color, edgecolor='white')
+                        elif var_original in var_colors:
+                            # Generate a shade of the base color for this variable
+                            base_color = var_colors[var_original]
+                            # Create a lighter shade based on value index (0.3-0.9 range)
+                            lightness = 0.3 + 0.6 * (val_idx / max(1, len(values_names) - 1))
+                            adjusted_color = mcolors.rgb_to_hsv(base_color[:3])
+                            # Keep hue, adjust saturation and value
+                            adjusted_color[1] *= lightness  # Reduce saturation for lighter shades
+                            adjusted_color[2] = min(1.0, adjusted_color[2] * (1.5 - lightness*0.5))  # Adjust value
+                            color = mcolors.hsv_to_rgb(adjusted_color)
+                            bar = axes.barh(v, value, left=cum_width, height=.8, color=color, edgecolor='white')
                         else:
+                            # Default fallback
                             bar = axes.barh(v, value, left=cum_width, height=.8, edgecolor='white')
                         
                         # Choose text color based on bar darkness
@@ -1809,6 +1836,7 @@ class FlowDiagram:
                                     ha='center', va='center', color=textcolor, fontsize=8)
                         
                         cum_width += value
+                
                     
                     # Add missing values at the end if present
                     if ('Missing' or "NA") in table.loc[table.index.get_level_values(0) == var].index.get_level_values(1):

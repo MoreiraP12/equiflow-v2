@@ -1,0 +1,102 @@
+// Cohort Exclusion Process
+digraph {
+	graph [fontname=Helvetica splines=ortho]
+	node [fixedsize=true fontname=Helvetica height=1 shape=box style=filled width=2.5]
+	edge [arrowhead=vee arrowsize=0.5 dir=forward minlen=1]
+	A0 [label="1,000 patients
+Initial Patient Cohort" fillcolor=aliceblue fontname=Helvetica shape=box style=filled]
+	A1 [label="999 patients
+Adult Patients" fillcolor=aliceblue fontname=Helvetica shape=box style=filled]
+	A2 [label="969 patients
+Complete BMI Data" fillcolor=aliceblue fontname=Helvetica shape=box style=filled]
+	A3 [label="925 patients
+Normal Lab Values" fillcolor=aliceblue fontname=Helvetica shape=box style=filled]
+	A4 [label="752 patients
+Mild/Moderate Severity" fillcolor=aliceblue fontname=Helvetica shape=box style=filled]
+	plot_dist4 [label="" color=transparent height=1.2 image="/Users/pedro/Desktop/equiflow-v2/equiflow_test_outputs/imgs/part4.svg" imagepos=bc imagescale=true shape=box width=3.0]
+	{
+		rank=same
+		A4
+		plot_dist4
+	}
+	E0 [label="1 patients excluded for
+Age < 18" fillcolor=linen shape=box style=filled]
+	E1 [label="30 patients excluded for
+Missing BMI" fillcolor=linen shape=box style=filled]
+	E2 [label="44 patients excluded for
+Lab Val X > 5" fillcolor=linen shape=box style=filled]
+	E3 [label="173 patients excluded for
+Severe Condition" fillcolor=linen shape=box style=filled]
+	IA0 [label="" height=0 shape=point]
+	IA1 [label="" height=0 shape=point]
+	IA2 [label="" height=0 shape=point]
+	IA3 [label="" height=0 shape=point]
+	IA4 [label="" height=0 shape=point]
+	A0 -> IA0 [arrowhead=none color=dimgray]
+	IA0 -> A1 [color=dimgray]
+	A1 -> IA1 [arrowhead=none color=dimgray]
+	IA1 -> A2 [color=dimgray]
+	A2 -> IA2 [arrowhead=none color=dimgray]
+	IA2 -> A3 [color=dimgray]
+	A3 -> IA3 [arrowhead=none color=dimgray]
+	IA3 -> A4 [color=dimgray]
+	IA0 -> E0 [color=dimgray constraint=false]
+	IA1 -> E1 [color=dimgray constraint=false]
+	IA2 -> E2 [color=dimgray constraint=false]
+	IA3 -> E3 [color=dimgray constraint=false]
+	{
+		rank=same
+		IA0
+		E0
+	}
+	{
+		rank=same
+		IA1
+		E1
+	}
+	{
+		rank=same
+		IA2
+		E2
+	}
+	{
+		rank=same
+		IA3
+		E3
+	}
+	plot_dist0 [label="" color=transparent height=1.2 image="/Users/pedro/Desktop/equiflow-v2/equiflow_test_outputs/imgs/part0.svg" imagepos=bc imagescale=true shape=box width=3.25]
+	A0 -> plot_dist0 [constraint=false style=invis]
+	{
+		rank=same
+		A0
+		plot_dist0
+	}
+	plot_dist1 [label="" color=transparent height=1.2 image="/Users/pedro/Desktop/equiflow-v2/equiflow_test_outputs/imgs/part1.svg" imagepos=bc imagescale=true shape=box width=3.25]
+	A1 -> plot_dist1 [constraint=false style=invis]
+	{
+		rank=same
+		A1
+		plot_dist1
+	}
+	plot_dist2 [label="" color=transparent height=1.2 image="/Users/pedro/Desktop/equiflow-v2/equiflow_test_outputs/imgs/part2.svg" imagepos=bc imagescale=true shape=box width=3.25]
+	A2 -> plot_dist2 [constraint=false style=invis]
+	{
+		rank=same
+		A2
+		plot_dist2
+	}
+	plot_dist3 [label="" color=transparent height=1.2 image="/Users/pedro/Desktop/equiflow-v2/equiflow_test_outputs/imgs/part3.svg" imagepos=bc imagescale=true shape=box width=3.25]
+	A3 -> plot_dist3 [constraint=false style=invis]
+	{
+		rank=same
+		A3
+		plot_dist3
+	}
+	legend [label="" color=transparent height=1.2 image="/Users/pedro/Desktop/equiflow-v2/equiflow_test_outputs/imgs/legend.svg" imagepos=bl imagescale=true shape=box width=2.5]
+	E0 -> legend [style=invis]
+	{
+		rank=same
+		E0
+		legend
+	}
+}

@@ -20,7 +20,7 @@ output_dir = os.path.abspath("test_output")
 os.makedirs(output_dir, exist_ok=True)
 os.makedirs(os.path.join(output_dir, "imgs"), exist_ok=True)
 
-# EXAMPLE 1: Full metrics version
+""" # EXAMPLE 1: Full metrics version
 print("\nCreating EquiFlow instance with ALL metrics...")
 ef_full = EquiFlow(
     data=data,
@@ -60,3 +60,14 @@ ef_full.plot_flows(
 )
 
 print(f"Full metrics diagram saved to {output_dir}/full_flow_diagram.pdf")
+ """
+flow = (EasyFlow(data, title="Patient Selection")
+    .categorize(["Frailty", "Gender"])
+    .measure_normal(["Age"])
+    .exclude(data["Age"] >= 18, "Removed patients under 18 years")
+    .exclude(~data["Frailty"].isna(), "Excluded non-consenting patients")
+    .generate(output="patient_selection_diagram")
+)
+
+flow.diagram
+
