@@ -6,7 +6,7 @@ import pandas as pd
 matplotlib.use('Agg')
 
 # Read the dataset
-data = pd.read_csv("../DataFrames/eicu_all_patients.csv")
+data = pd.read_csv("eicu_all_patients.csv")
 # Print initial cohort size
 print(f"Initial cohort size: {len(data)}")
 

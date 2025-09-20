@@ -89,9 +89,9 @@ class EquiFlow:
 
       self.label_suffix = label_suffix
       self.thousands_sep = thousands_sep
-      self.categorical = categorical
-      self.normal = normal
-      self.nonnormal = nonnormal
+      self.categorical = categorical if categorical is not None else []
+      self.normal = normal if normal is not None else []
+      self.nonnormal = nonnormal if nonnormal is not None else []
       self.order_vars = order_vars
       self.order_classes = order_classes 
       self.limit = limit
@@ -1453,17 +1453,27 @@ class TableDrifts():
                   # Apply Hedges correction for binary case
                   j_factor = 1 - (3/(4*(n1_total + n2_total - 2) - 1))
                   smd = j_factor * smd
-                table.iloc[i,j] = np.round(smd, self._decimals)
+                # Clean up the result: handle -0.0 and round properly
+                smd = np.round(smd, self._decimals)
+                if smd == -0.0:
+                  smd = 0.0
+                table.iloc[i,j] = smd
               else:
                 table.iloc[i,j] = 0.0
             elif len(prop1_list) > 2:  # Multi-category variable - use Yang & Dalton method
-              table.iloc[i,j] = self._cat_smd(
+              smd = self._cat_smd(
                 prop1=prop1_list,
                 prop2=prop2_list,
                 n1=n1_total,
                 n2=n2_total,
                 unbiased=True
               )
+              # Handle NaN and -0.0 cases
+              if pd.isna(smd) or np.isnan(smd):
+                smd = 0.0
+              elif smd == -0.0:
+                smd = 0.0
+              table.iloc[i,j] = smd
             else:  # Single category (shouldn't happen with proper data)
               table.iloc[i,j] = 0.0
           else:
@@ -1478,7 +1488,7 @@ class TableDrifts():
           sd_1 = self._table_cat_perc.loc[index_name, :].iloc[j+1]
           n_0 = self._table_characteristics.loc[('Overall', ' '), :].iloc[j]
           n_1 = self._table_characteristics.loc[('Overall', ' '), :].iloc[j+1]
-          table.iloc[i,j] = self._cont_smd(
+          smd = self._cont_smd(
              mean1=mean_0,
              mean2=mean_1,
              sd1=sd_0,
@@ -1487,6 +1497,10 @@ class TableDrifts():
              n2=n_1,
              unbiased=True
           )
+          # Handle -0.0 case
+          if smd == -0.0:
+            smd = 0.0
+          table.iloc[i,j] = smd
         else:
           # For missing rows or other cases, leave blank
           table.iloc[i,j] = ''
@@ -1515,17 +1529,76 @@ class TableDrifts():
 
         # use cat_smd for categorical variables
         if inverse_rename[index_name] in self._categorical:
-          cat_n_0 = self._table_cat_n.loc[index_name, :].iloc[:, j].to_list()
-          cat_perc_0 = self._table_cat_perc.loc[index_name, :].iloc[:, j].to_list()
-          cat_n_1 = self._table_cat_n.loc[index_name, :].iloc[:, j+1].to_list()
-          cat_perc_1 = self._table_cat_perc.loc[index_name, :].iloc[:, j+1].to_list()
-          table.iloc[i,j] = self._cat_smd(
-             prop1=[c/100 for c in cat_perc_0],
-             prop2=[c/100 for c in cat_perc_1],
-             n1=cat_n_0,
-             n2=cat_n_1,
-             unbiased=False
-          )
+          # Get all category rows for this variable (excluding 'Missing')
+          var_display_name = index_name
+          
+          # Find all rows for this categorical variable
+          cat_rows = []
+          for idx in self._table_cat_n.index:
+            if idx[0] == var_display_name and idx[1] != 'Missing':
+              cat_rows.append(idx)
+          
+          if len(cat_rows) == 0:
+            table.iloc[i,j] = 0.0
+            continue
+            
+          # Get proportions for both cohorts for all categories
+          prop1_list = []
+          prop2_list = []
+          n1_total = 0
+          n2_total = 0
+          
+          for cat_row in cat_rows:
+            # Get counts and percentages for this category
+            n1_cat = self._table_cat_n.loc[cat_row, :].iloc[j]
+            perc1_cat = self._table_cat_perc.loc[cat_row, :].iloc[j]
+            n2_cat = self._table_cat_n.loc[cat_row, :].iloc[j+1]
+            perc2_cat = self._table_cat_perc.loc[cat_row, :].iloc[j+1]
+            
+            # Convert percentage to proportion
+            prop1_list.append(perc1_cat / 100.0)
+            prop2_list.append(perc2_cat / 100.0)
+            
+            # Accumulate total counts
+            n1_total += n1_cat
+            n2_total += n2_cat
+          
+          # Calculate overall SMD for this categorical variable
+          if len(prop1_list) == 2:  # Binary variable - use simpler calculation
+            # For binary variables, use the standard SMD formula to avoid singular matrix
+            p1 = prop1_list[0]  # Proportion of first category in cohort 1
+            p2 = prop2_list[0]  # Proportion of first category in cohort 2
+            diff = abs(p1 - p2)
+            pooled_var = (p1*(1-p1) + p2*(1-p2))/2
+            if pooled_var > 0:
+              smd = diff / np.sqrt(pooled_var)
+              if n1_total > 0 and n2_total > 0:
+                # Apply Hedges correction for binary case
+                j_factor = 1 - (3/(4*(n1_total + n2_total - 2) - 1))
+                smd = j_factor * smd
+              # Clean up the result: handle -0.0 and round properly
+              smd = np.round(smd, self._decimals)
+              if smd == -0.0:
+                smd = 0.0
+              table.iloc[i,j] = smd
+            else:
+              table.iloc[i,j] = 0.0
+          elif len(prop1_list) > 2:  # Multi-category variable - use Yang & Dalton method
+            smd = self._cat_smd(
+              prop1=prop1_list,
+              prop2=prop2_list,
+              n1=n1_total,
+              n2=n2_total,
+              unbiased=False
+            )
+            # Handle NaN and -0.0 cases
+            if pd.isna(smd) or np.isnan(smd):
+              smd = 0.0
+            elif smd == -0.0:
+              smd = 0.0
+            table.iloc[i,j] = smd
+          else:  # Single category (shouldn't happen with proper data)
+            table.iloc[i,j] = 0.0
 
         # use cont_smd for continuous variables
         elif (inverse_rename[index_name] in self._normal) | (inverse_rename[index_name] in self._nonnormal):
@@ -1535,7 +1608,7 @@ class TableDrifts():
           sd_1 = self._table_cat_perc.loc[(index_name, ' '), :].iloc[j+1]
           n_0 = self._table_characteristics.loc[('Overall', ' '), :].iloc[j]
           n_1 = self._table_characteristics.loc[('Overall', ' '), :].iloc[j+1]
-          table.iloc[i,j] = self._cont_smd(
+          smd = self._cont_smd(
              mean1=mean_0,
              mean2=mean_1,
              sd1=sd_0,
@@ -1544,6 +1617,10 @@ class TableDrifts():
              n2=n_1,
              unbiased=False
           )
+          # Handle -0.0 case
+          if smd == -0.0:
+            smd = 0.0
+          table.iloc[i,j] = smd
           
     return table
 
@@ -2104,11 +2181,18 @@ class FlowDiagram:
                     width=str(self.width + 1),
                     height=str(self.height+ 1.2))
 
-            # Connect the final cohort node to the legend from the first exclusion edge
-            dot.edge(f'E0', 'legend', style='invis')
+            # Create an invisible spacer node to push the legend further right
+            dot.node('legend_spacer', label='', shape='point', style='invis', 
+                    width='0', height='0')
+            
+            # Position legend much further to the right using invisible edges and spacers
+            last_cohort_idx = len(self.table_flows.columns) - 1
+            dot.edge(f'A{last_cohort_idx}', 'legend_spacer', style='invis', minlen='3')
+            dot.edge('legend_spacer', 'legend', style='invis', minlen='2')
+            
+            # Use separate rank for legend to avoid interference
             with dot.subgraph() as s:
-                s.attr(rank='same')
-                s.node(f'E0')
+                s.attr(rank='max')  # Place at the rightmost position
                 s.node('legend')
         
         # Save and render the graph
