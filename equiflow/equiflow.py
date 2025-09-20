@@ -1383,29 +1383,95 @@ class TableDrifts():
     table = pd.DataFrame(index=self._table_characteristics.index,
                          columns=self._table_flows.columns)
     
+    # Track which categorical variables we've already processed
+    processed_categorical_vars = set()
+    
     for i, index_name in enumerate(self._table_characteristics.index):
       for j, column_name in enumerate(self._table_flows.columns):
-        # skip if index_name is 'Overall' or 'Missing'
-        if (index_name[0] == 'Overall'): # | (index_name[1] == 'Missing'):
+        # skip if index_name is 'Overall'
+        if (index_name[0] == 'Overall'):
           table.iloc[i,j] = ''
           continue
         
-        # use cat_smd for categorical variables
-        if inverse_rename[index_name[0]] in self._categorical:
-          cat_n_0 = self._table_cat_n.loc[index_name, :].iloc[j]
-          cat_perc_0 = self._table_cat_perc.loc[index_name, :].iloc[j]
-          cat_n_1 = self._table_cat_n.loc[index_name, :].iloc[j+1]
-          cat_perc_1 = self._table_cat_perc.loc[index_name, :].iloc[j+1]
-          table.iloc[i,j] = self._cat_smd(
-             prop1=[cat_perc_0/100],
-             prop2=[cat_perc_1/100],
-             n1=cat_n_0,
-             n2=cat_n_1,
-             unbiased=True
-          )
+        # Get the original variable name
+        orig_var = inverse_rename[index_name[0]]
         
-        # use cont_smd for continuous variables
-        elif (inverse_rename[index_name[0]] in self._normal) | (inverse_rename[index_name[0]] in self._nonnormal):
+        # Handle categorical variables
+        if orig_var in self._categorical:
+          # Create a unique key for this variable and column comparison
+          var_col_key = (orig_var, j)
+          
+          # Only calculate SMD once per categorical variable per column comparison
+          if var_col_key not in processed_categorical_vars:
+            # Mark this variable-column combination as processed
+            processed_categorical_vars.add(var_col_key)
+            
+            # Get all category rows for this variable (excluding 'Missing')
+            var_display_name = index_name[0]
+            
+            # Find all rows for this categorical variable
+            cat_rows = []
+            for idx in self._table_cat_n.index:
+              if idx[0] == var_display_name and idx[1] != 'Missing':
+                cat_rows.append(idx)
+            
+            if len(cat_rows) == 0:
+              table.iloc[i,j] = ''
+              continue
+              
+            # Get proportions for both cohorts for all categories
+            prop1_list = []
+            prop2_list = []
+            n1_total = 0
+            n2_total = 0
+            
+            for cat_row in cat_rows:
+              # Get counts and percentages for this category
+              n1_cat = self._table_cat_n.loc[cat_row, :].iloc[j]
+              perc1_cat = self._table_cat_perc.loc[cat_row, :].iloc[j]
+              n2_cat = self._table_cat_n.loc[cat_row, :].iloc[j+1]
+              perc2_cat = self._table_cat_perc.loc[cat_row, :].iloc[j+1]
+              
+              # Convert percentage to proportion
+              prop1_list.append(perc1_cat / 100.0)
+              prop2_list.append(perc2_cat / 100.0)
+              
+              # Accumulate total counts
+              n1_total += n1_cat
+              n2_total += n2_cat
+            
+            # Calculate overall SMD for this categorical variable
+            if len(prop1_list) == 2:  # Binary variable - use simpler calculation
+              # For binary variables, use the standard SMD formula to avoid singular matrix
+              p1 = prop1_list[0]  # Proportion of first category in cohort 1
+              p2 = prop2_list[0]  # Proportion of first category in cohort 2
+              diff = abs(p1 - p2)
+              pooled_var = (p1*(1-p1) + p2*(1-p2))/2
+              if pooled_var > 0:
+                smd = diff / np.sqrt(pooled_var)
+                if n1_total > 0 and n2_total > 0:
+                  # Apply Hedges correction for binary case
+                  j_factor = 1 - (3/(4*(n1_total + n2_total - 2) - 1))
+                  smd = j_factor * smd
+                table.iloc[i,j] = np.round(smd, self._decimals)
+              else:
+                table.iloc[i,j] = 0.0
+            elif len(prop1_list) > 2:  # Multi-category variable - use Yang & Dalton method
+              table.iloc[i,j] = self._cat_smd(
+                prop1=prop1_list,
+                prop2=prop2_list,
+                n1=n1_total,
+                n2=n2_total,
+                unbiased=True
+              )
+            else:  # Single category (shouldn't happen with proper data)
+              table.iloc[i,j] = 0.0
+          else:
+            # For subsequent rows of the same categorical variable, leave blank
+            table.iloc[i,j] = ''
+        
+        # Handle continuous variables (normal and non-normal)
+        elif (orig_var in self._normal) or (orig_var in self._nonnormal):
           mean_0 = self._table_cat_n.loc[index_name, :].iloc[j]
           sd_0 = self._table_cat_perc.loc[index_name, :].iloc[j]
           mean_1 = self._table_cat_n.loc[index_name, :].iloc[j+1]
@@ -1421,6 +1487,9 @@ class TableDrifts():
              n2=n_1,
              unbiased=True
           )
+        else:
+          # For missing rows or other cases, leave blank
+          table.iloc[i,j] = ''
           
     return table
   
