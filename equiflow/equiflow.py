@@ -1,6 +1,16 @@
 """
-The equiflow package is used for creating "Equity-focused Cohort Section Flow Diagrams"
-for cohort selection in clinical and machine learning papers.
+EquiFlow: Equity-focused Cohort Selection Flow Diagrams.
+
+A Python package for creating visual flow diagrams that track demographic
+composition changes through sequential cohort exclusion steps in clinical
+and epidemiological research.
+
+Features:
+- Track cohort sizes through exclusion steps
+- Calculate standardized mean differences (SMDs) to detect demographic drift
+- Generate publication-ready flow diagrams with embedded distribution plots
+- Support for categorical, normally-distributed, and non-normal continuous variables
+- Multiple testing correction for p-value calculations
 """
 
 from typing import Optional, Union, List, Dict, Any, Tuple, Callable
@@ -8,204 +18,493 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import os
-import inspect
 import graphviz
-import re
+import warnings
 
+__version__ = "0.1.7"
+
+__all__ = [
+    "EquiFlow",
+    "EasyFlow",
+    "TableFlows",
+    "TableCharacteristics",
+    "TableDrifts",
+    "TablePValues",
+    "FlowDiagram",
+]
+
+
+# Utility Functions
+
+def format_smd(smd_value: Any, decimals: int = 2) -> str:
+    """
+    Format SMD value with specified decimal places.
+    
+    Shows whole numbers without decimal places (e.g., '0' instead of '0.00').
+    
+    Parameters
+    ----------
+    smd_value : Any
+        The SMD value to format.
+    decimals : int, default=2
+        Number of decimal places for non-whole numbers.
+        
+    Returns
+    -------
+    str
+        Formatted SMD string.
+    """
+    if pd.isna(smd_value) or smd_value == '':
+        return ''
+    try:
+        float_val = float(smd_value)
+        if float_val == int(float_val):
+            return str(int(float_val))
+        else:
+            return f"{float_val:.{decimals}f}"
+    except (ValueError, TypeError):
+        return str(smd_value)
+
+
+def validate_variables(
+    df: pd.DataFrame,
+    categorical: List[str],
+    normal: List[str],
+    nonnormal: List[str],
+    context: str = "EquiFlow"
+) -> None:
+    """
+    Validate that specified variables exist in the DataFrame.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The DataFrame to check.
+    categorical : list
+        List of categorical variable names.
+    normal : list
+        List of normally-distributed variable names.
+    nonnormal : list
+        List of non-normally distributed variable names.
+    context : str, default="EquiFlow"
+        Context string for error messages.
+        
+    Raises
+    ------
+    ValueError
+        If any specified variable is not found in the DataFrame.
+    """
+    all_vars = set(categorical + normal + nonnormal)
+    df_cols = set(df.columns)
+    missing = all_vars - df_cols
+    
+    if missing:
+        raise ValueError(
+            f"{context}: The following variables were not found in the DataFrame: "
+            f"{sorted(missing)}. Available columns: {sorted(df_cols)}"
+        )
+
+
+def validate_dataframe_not_empty(df: pd.DataFrame, context: str = "EquiFlow") -> None:
+    """
+    Validate that a DataFrame is not empty.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The DataFrame to check.
+    context : str, default="EquiFlow"
+        Context string for error messages.
+        
+    Raises
+    ------
+    ValueError
+        If the DataFrame is empty.
+    """
+    if df.empty:
+        raise ValueError(f"{context}: DataFrame cannot be empty.")
+
+
+def check_normality(series: pd.Series, alpha: float = 0.05) -> bool:
+    """
+    Check if a numeric series is approximately normally distributed.
+    
+    Uses Shapiro-Wilk test for small samples (n <= 2000) and
+    D'Agostino-Pearson test for larger samples.
+    
+    Parameters
+    ----------
+    series : pd.Series
+        Numeric series to test.
+    alpha : float, default=0.05
+        Significance level for the normality test.
+        
+    Returns
+    -------
+    bool
+        True if the series appears normally distributed, False otherwise.
+    """
+    from scipy import stats
+    
+    clean = pd.to_numeric(series, errors='coerce').dropna()
+    
+    if len(clean) < 8:
+        # Too few samples to reliably test normality
+        return False
+    
+    try:
+        if len(clean) <= 2000:
+            # Shapiro-Wilk test (more powerful for smaller samples)
+            _, p_value = stats.shapiro(clean)
+        else:
+            # D'Agostino-Pearson test for larger samples
+            _, p_value = stats.normaltest(clean)
+        
+        return p_value >= alpha
+    except Exception:
+        return False
+
+
+# Main EquiFlow Class
 
 class EquiFlow:
-  def __init__(self,
-                data: Optional[pd.DataFrame] = None,
-                dfs: Optional[list] = None,
-                initial_cohort_label: Optional[str] = None,
-                label_suffix: Optional[bool] = True,
-                thousands_sep: Optional[bool] = True,
-                categorical: Optional[list] = None,
-                normal: Optional[list] = None,
-                nonnormal: Optional[list] = None,
-                order_vars: Optional[list] = None,
-                order_classes: Optional[dict] = None,
-                limit: Optional[Union[int, dict]] = None,
-                decimals: Optional[int] = 1,
-                format_cat: Optional[str] = 'N (%)',
-                format_normal: Optional[str] = 'Mean ± SD',
-                format_nonnormal: Optional[str] = 'Median [IQR]',
-                missingness: Optional[bool] = True,
-                rename: Optional[dict] = None,
-              ) -> None:
-      """
-      Initialize EquiFlow object for creating cohort flow diagrams.
-      
-      Parameters
-      ----------
-      data : pd.DataFrame, optional
-          A single DataFrame containing the initial cohort.
-      dfs : list of pd.DataFrame, optional
-          A list of DataFrames representing sequential cohorts after exclusions.
-      initial_cohort_label : str, optional
-          Label for the initial cohort.
-      label_suffix : bool, default=True
-          Whether to add descriptive suffixes to variable labels.
-      thousands_sep : bool, default=True
-          Whether to use thousands separators in numbers.
-      categorical : list, optional
-          List of categorical variable names.
-      normal : list, optional
-          List of normally distributed continuous variable names.
-      nonnormal : list, optional
-          List of non-normally distributed continuous variable names.
-      order_vars : list, optional
-          List of variable names in the desired display order. Variables not listed
-          will be displayed after the ordered ones, in their original order.
-      decimals : int, default=1
-          Number of decimal places for rounding.
-      format_cat : str, default='N (%)'
-          Format for categorical variables ('N (%)', 'N', or '%').
-      format_normal : str, default='Mean ± SD'
-          Format for normal variables ('Mean ± SD', 'Mean', or 'SD').
-      format_nonnormal : str, default='Median [IQR]'
-          Format for non-normal variables ('Median [IQR]', 'Mean', or 'SD').
-      missingness : bool, default=True
-          Whether to include missingness information.
-      rename : dict, optional
-          Dictionary mapping variable names to display names.
-      """
-      if (order_classes is not None) & (not isinstance(order_classes, dict)):
-        raise ValueError("order_classes must be a dictionary")
+    """
+    Main class for creating equity-focused cohort selection flow diagrams.
     
-      if (limit is not None) & (not (isinstance(limit, int) or isinstance(limit, dict))):
-        raise ValueError("limit must be an integer or a dictionary")
-      
-      if (order_vars is not None) & (not isinstance(order_vars, list)):
-          raise ValueError("order_vars must be a list")
-      
-      if data is not None:
-          self._dfs = [data]
-
-      if dfs is not None:
-          self._dfs = dfs
-
-      self._clean_missing()
-
-      self.label_suffix = label_suffix
-      self.thousands_sep = thousands_sep
-      self.categorical = categorical if categorical is not None else []
-      self.normal = normal if normal is not None else []
-      self.nonnormal = nonnormal if nonnormal is not None else []
-      self.order_vars = order_vars
-      self.order_classes = order_classes 
-      self.limit = limit
-      self.decimals = decimals
-      self.format_cat = format_cat
-      self.format_normal = format_normal
-      self.format_nonnormal = format_nonnormal
-      self.missingness = missingness
-      self.rename = rename
-
-      self.table_flows = None
-      self.table_characteristics = None
-      self.table_drifts = None
-      self.flow_diagram = None
-
-      self.exclusion_labels = {}
-      self.new_cohort_labels = {}
-
-      if initial_cohort_label is not None:
-          self.new_cohort_labels[0] = initial_cohort_label
-      else:
-          self.new_cohort_labels[0] = 'Initial Cohort'
-
-
-  # method to categorize missing values under the same label
-  def _clean_missing(self): 
-    for i, df in enumerate(self._dfs):
-        # map all missing values directly without creating a new local variable
-        self._dfs[i] = df.replace(['', ' ', 'NA', 'N/A', 'na', 'n/a',
-                     'NA ', 'N/A ', 'na ', 'n/a ', 'NaN',
-                     'nan', 'NAN', 'Nan', 'N/A;', '<NA>',
-                     "_", '__', '___', '____', '_____',
-                     'NaT', 'None', 'none', 'NONE', 'Null',
-                     'null', 'NULL', 'missing', 'Missing',
-                     np.nan, pd.NA], None)
-      
-
- 
-  def add_exclusion(self,
-                    mask: Optional[bool] = None,
-                    new_cohort: Optional[pd.DataFrame] = None,
-                    exclusion_reason: Optional[str] = None,
-                    new_cohort_label: Optional[str] = None,
-                    ):
+    EquiFlow tracks how demographic composition changes through sequential
+    exclusion steps in cohort selection, helping researchers identify and
+    quantify selection bias.
     
-    if (mask is None) & (new_cohort is None):
-      raise ValueError("Either mask or new_cohort must be provided")
+    Parameters
+    ----------
+    data : pd.DataFrame, optional
+        Initial cohort data. Either `data` or `dfs` must be provided.
+    dfs : list of pd.DataFrame, optional
+        List of DataFrames representing sequential cohorts.
+    initial_cohort_label : str, optional
+        Label for the initial cohort. Default is "Initial Cohort".
+    label_suffix : bool, default=True
+        Whether to add format suffixes to variable labels (e.g., ", N (%)").
+    thousands_sep : bool, default=True
+        Whether to use thousands separators in counts.
+    categorical : list, optional
+        List of categorical variable names.
+    normal : list, optional
+        List of normally-distributed continuous variable names.
+    nonnormal : list, optional
+        List of non-normally distributed continuous variable names.
+    order_vars : list, optional
+        List specifying the display order of variables.
+    order_classes : dict, optional
+        Dictionary mapping categorical variable names to lists specifying
+        the display order of their categories.
+    limit : int or dict, optional
+        Maximum number of categories to display. If int, applies to all
+        categorical variables. If dict, maps variable names to limits.
+    decimals : int, default=2
+        Number of decimal places for statistics.
+    smd_decimals : int, optional
+        Number of decimal places for SMD values. Defaults to `decimals`.
+    format_cat : str, default="N (%)"
+        Format for categorical variables. Options: "N (%)", "N", "%".
+    format_normal : str, default="Mean ± SD"
+        Format for normal variables. Options: "Mean ± SD", "Mean", "SD".
+    format_nonnormal : str, default="Median [IQR]"
+        Format for non-normal variables. Options: "Median [IQR]", "Mean", "SD".
+    missingness : bool, default=True
+        Whether to display missingness statistics.
+    rename : dict, optional
+        Dictionary mapping variable names to display names.
+        
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> from equiflow import EquiFlow
+    >>> 
+    >>> # Create sample data
+    >>> df = pd.DataFrame({
+    ...     'age': [25, 30, 35, 40, 45, 50, 55, 60],
+    ...     'sex': ['M', 'F', 'M', 'F', 'M', 'F', 'M', 'F'],
+    ...     'score': [80, 85, 90, 95, 70, 75, 80, 85]
+    ... })
+    >>> 
+    >>> # Initialize EquiFlow
+    >>> ef = EquiFlow(
+    ...     data=df,
+    ...     categorical=['sex'],
+    ...     normal=['age'],
+    ...     nonnormal=['score']
+    ... )
+    >>> 
+    >>> # Add exclusion step (exclude patients under 35)
+    >>> ef.add_exclusion(
+    ...     keep=df['age'] >= 35,
+    ...     exclusion_reason="Age < 35",
+    ...     new_cohort_label="Adults 35+"
+    ... )
+    >>> 
+    >>> # View results
+    >>> print(ef.view_table_flows())
+    """
     
-    if (mask is not None) & (new_cohort is not None):
-      raise ValueError("Only one of mask or new_cohort must be provided")
-    
-    if mask is not None:
-      self._dfs.append(self._dfs[-1].loc[mask])
+    def __init__(
+        self,
+        data: Optional[pd.DataFrame] = None,
+        dfs: Optional[List[pd.DataFrame]] = None,
+        initial_cohort_label: Optional[str] = None,
+        label_suffix: bool = True,
+        thousands_sep: bool = True,
+        categorical: Optional[List[str]] = None,
+        normal: Optional[List[str]] = None,
+        nonnormal: Optional[List[str]] = None,
+        order_vars: Optional[List[str]] = None,
+        order_classes: Optional[Dict[str, List[str]]] = None,
+        limit: Optional[Union[int, Dict[str, int]]] = None,
+        decimals: int = 2,
+        smd_decimals: Optional[int] = None,
+        format_cat: str = "N (%)",
+        format_normal: str = "Mean ± SD",
+        format_nonnormal: str = "Median [IQR]",
+        missingness: bool = True,
+        rename: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Initialize EquiFlow object for creating cohort flow diagrams."""
+        
+        # Validate parameters
+        if order_classes is not None and not isinstance(order_classes, dict):
+            raise ValueError("order_classes must be a dictionary mapping variable names to category lists")
+        if limit is not None and not (isinstance(limit, int) or isinstance(limit, dict)):
+            raise ValueError("limit must be an integer or a dictionary mapping variable names to integers")
+        if order_vars is not None and not isinstance(order_vars, list):
+            raise ValueError("order_vars must be a list of variable names")
+        if data is None and dfs is None:
+            raise ValueError("Either 'data' or 'dfs' must be provided")
 
-    if new_cohort is not None:
-      # first make sure that the new cohort has the same columns as the previous one
-      if not set(new_cohort.columns).issubset(self._dfs[-1].columns):
-        raise ValueError("new_cohort must have the same columns as the previous cohort. Only rows/indices should differ")
-      
-      # make sure that the new cohort is not bigger than the previous one; we are excluding!
-      if len(new_cohort) > len(self._dfs[-1]):
-        raise ValueError("new_cohort must have fewer or equal rows than the previous cohort")
-      
-      self._dfs.append(new_cohort)
+        # Initialize DataFrames
+        self._dfs: List[pd.DataFrame] = []
+        if data is not None:
+            validate_dataframe_not_empty(data, "EquiFlow.__init__")
+            self._dfs = [data.copy()]
+        if dfs is not None:
+            if not dfs:
+                raise ValueError("dfs list cannot be empty")
+            for i, df in enumerate(dfs):
+                validate_dataframe_not_empty(df, f"EquiFlow.__init__ (dfs[{i}])")
+            self._dfs = [df.copy() for df in dfs]
+        
+        # Clean missing values
+        self._clean_missing()
 
-    if exclusion_reason is not None:
-      self.exclusion_labels[len(self._dfs) - 1] = exclusion_reason
-    else:
-      self.exclusion_labels[len(self._dfs) - 1] = f'Exclusion {len(self._dfs) - 1}'
+        # Store parameters
+        self.label_suffix = label_suffix
+        self.thousands_sep = thousands_sep
+        self.categorical = categorical if categorical is not None else []
+        self.normal = normal if normal is not None else []
+        self.nonnormal = nonnormal if nonnormal is not None else []
+        self.order_vars = order_vars
+        self.order_classes = order_classes if order_classes is not None else {}
+        self.limit = limit
+        self.decimals = decimals
+        self.smd_decimals = smd_decimals if smd_decimals is not None else decimals
+        self.format_cat = format_cat
+        self.format_normal = format_normal
+        self.format_nonnormal = format_nonnormal
+        self.missingness = missingness
+        self.rename = rename if rename is not None else {}
+        
+        # Validate variables exist in the initial DataFrame
+        if self._dfs:
+            validate_variables(
+                self._dfs[0],
+                self.categorical,
+                self.normal,
+                self.nonnormal,
+                "EquiFlow.__init__"
+            )
+        
+        # Initialize output containers
+        self.table_flows: Optional[TableFlows] = None
+        self.table_characteristics: Optional[TableCharacteristics] = None
+        self.table_drifts: Optional[TableDrifts] = None
+        self.table_pvalues: Optional[TablePValues] = None
+        self.flow_diagram: Optional[FlowDiagram] = None
+        
+        # Initialize labels
+        self.exclusion_labels: Dict[int, str] = {}
+        self.new_cohort_labels: Dict[int, str] = {}
+        if initial_cohort_label is not None:
+            self.new_cohort_labels[0] = initial_cohort_label
+        else:
+            self.new_cohort_labels[0] = "Initial Cohort"
 
-    if new_cohort_label is not None:
-      self.new_cohort_labels[len(self._dfs) - 1] = new_cohort_label
-    else:
-      self.new_cohort_labels[len(self._dfs) - 1] = f'Cohort {len(self._dfs) - 1}'
-       
+    def __repr__(self) -> str:
+        """Return string representation of EquiFlow object."""
+        n_cohorts = len(self._dfs)
+        n_vars = len(self.categorical) + len(self.normal) + len(self.nonnormal)
+        initial_n = len(self._dfs[0]) if self._dfs else 0
+        final_n = len(self._dfs[-1]) if self._dfs else 0
+        return (
+            f"EquiFlow(cohorts={n_cohorts}, variables={n_vars}, "
+            f"initial_n={initial_n:,}, final_n={final_n:,})"
+        )
 
-  def view_table_flows(self, 
-                       label_suffix: Optional[bool] = None,
-                       thousands_sep: Optional[bool] = None) -> pd.DataFrame:
-    
-    
-    if len(self._dfs) < 2:
-      raise ValueError("At least two cohorts must be provided. Please use add_exclusion() to add exclusions.")
-    
-    if label_suffix is None:
-      label_suffix = self.label_suffix 
+    def _clean_missing(self) -> None:
+        """
+        Standardize missing value representations across all DataFrames.
+        
+        Converts various missing value representations to pandas NA values
+        for consistent handling throughout the package.
+        """
+        missing_values = [
+            "", " ", "NA", "N/A", "na", "n/a", "NA ", "N/A ", "na ", "n/a ",
+            "NaN", "nan", "NAN", "Nan", "N/A;", "<NA>", "_", "__", "___",
+            "____", "_____", "NaT", "None", "none", "NONE", "Null", "null",
+            "NULL", "missing", "Missing",
+        ]
+        
+        for i, df in enumerate(self._dfs):
+            # Replace string missing values with pd.NA
+            df_cleaned = df.replace(missing_values, pd.NA)
+            
+            # Also handle numpy NaN explicitly
+            for col in df_cleaned.columns:
+                if df_cleaned[col].dtype == 'object':
+                    # For object columns, replace np.nan with pd.NA
+                    df_cleaned[col] = df_cleaned[col].replace({np.nan: pd.NA})
+            
+            self._dfs[i] = df_cleaned
 
-    if thousands_sep is None:
-      thousands_sep = self.thousands_sep
+    def add_exclusion(
+        self,
+        keep: Optional[pd.Series] = None,
+        new_cohort: Optional[pd.DataFrame] = None,
+        exclusion_reason: Optional[str] = None,
+        new_cohort_label: Optional[str] = None,
+    ) -> 'EquiFlow':
+        """
+        Add an exclusion step to the cohort flow.
+        
+        Parameters
+        ----------
+        keep : pd.Series of bool, optional
+            Boolean mask where True indicates rows to KEEP (retain).
+            Rows where keep=False will be excluded.
+            Either `keep` or `new_cohort` must be provided, but not both.
+        new_cohort : pd.DataFrame, optional
+            DataFrame representing the new cohort after exclusion.
+            Either `keep` or `new_cohort` must be provided, but not both.
+        exclusion_reason : str, optional
+            Description of why rows were excluded.
+        new_cohort_label : str, optional
+            Label for the resulting cohort.
+            
+        Returns
+        -------
+        EquiFlow
+            Self, for method chaining.
+            
+        Examples
+        --------
+        >>> # Keep patients 18 and older (exclude those under 18)
+        >>> ef.add_exclusion(
+        ...     keep=df['age'] >= 18,
+        ...     exclusion_reason="Age < 18",
+        ...     new_cohort_label="Adult cohort"
+        ... )
+        """
+        if keep is None and new_cohort is None:
+            raise ValueError("Either 'keep' or 'new_cohort' must be provided")
+        if keep is not None and new_cohort is not None:
+            raise ValueError("Only one of 'keep' or 'new_cohort' can be provided, not both")
+        
+        if keep is not None:
+            # KEEP rows where keep is True
+            new_df = self._dfs[-1].loc[keep].copy()
+        else:
+            new_df = new_cohort.copy()
+        
+        # Warn if the resulting cohort is empty
+        if new_df.empty:
+            warnings.warn(
+                f"Exclusion step '{exclusion_reason or 'unnamed'}' resulted in an empty cohort. "
+                "This may cause issues with downstream calculations.",
+                UserWarning
+            )
+        
+        self._dfs.append(new_df)
+        
+        # Set labels
+        step_idx = len(self._dfs) - 1
+        if exclusion_reason is not None:
+            self.exclusion_labels[step_idx] = exclusion_reason
+        else:
+            self.exclusion_labels[step_idx] = f"Exclusion {step_idx}"
+        
+        if new_cohort_label is not None:
+            self.new_cohort_labels[step_idx] = new_cohort_label
+        else:
+            self.new_cohort_labels[step_idx] = f"Cohort {step_idx}"
+        
+        return self
 
-    
-    self.table_flows = TableFlows(
-       dfs=self._dfs,
-       label_suffix=label_suffix,
-       thousands_sep=thousands_sep,
-    )
+    def view_table_flows(
+        self,
+        label_suffix: Optional[bool] = None,
+        thousands_sep: Optional[bool] = None
+    ) -> pd.DataFrame:
+        """
+        Generate and return the cohort flow table.
+        
+        Parameters
+        ----------
+        label_suffix : bool, optional
+            Whether to add ", n" suffix to labels.
+        thousands_sep : bool, optional
+            Whether to use thousands separators.
+            
+        Returns
+        -------
+        pd.DataFrame
+            Table showing cohort sizes at each step.
+            
+        Raises
+        ------
+        ValueError
+            If fewer than two cohorts have been defined.
+        """
+        if len(self._dfs) < 2:
+            raise ValueError(
+                "At least two cohorts must be provided. "
+                "Use add_exclusion() to add exclusion steps."
+            )
+        
+        label_suffix = label_suffix if label_suffix is not None else self.label_suffix
+        thousands_sep = thousands_sep if thousands_sep is not None else self.thousands_sep
+        
+        self.table_flows = TableFlows(
+            dfs=self._dfs,
+            label_suffix=label_suffix,
+            thousands_sep=thousands_sep
+        )
+        return self.table_flows.view()
 
-    return self.table_flows.view()
-
-  def view_table_characteristics(self,
-                                 categorical: Optional[list] = None,
-                                 normal: Optional[list] = None,
-                                 nonnormal: Optional[list] = None,
-                                 order_vars: Optional[list] = None,
-                                 order_classes: Optional[dict] = None,  
-                                 limit: Optional[Union[int, dict]] = None,
-                                 decimals: Optional[int] = None,
-                                 format_cat: Optional[str] = None,
-                                 format_normal: Optional[str] = None,
-                                 format_nonnormal: Optional[str] = None,
-                                 thousands_sep: Optional[bool] = None,
-                                 missingness: Optional[bool] = None,
-                                 label_suffix: Optional[bool] = None,
-                                 rename: Optional[dict] = None) -> pd.DataFrame:
+    def view_table_characteristics(
+        self,
+        categorical: Optional[List[str]] = None,
+        normal: Optional[List[str]] = None,
+        nonnormal: Optional[List[str]] = None,
+        order_vars: Optional[List[str]] = None,
+        order_classes: Optional[Dict[str, List[str]]] = None,
+        limit: Optional[Union[int, Dict[str, int]]] = None,
+        decimals: Optional[int] = None,
+        format_cat: Optional[str] = None,
+        format_normal: Optional[str] = None,
+        format_nonnormal: Optional[str] = None,
+        thousands_sep: Optional[bool] = None,
+        missingness: Optional[bool] = None,
+        label_suffix: Optional[bool] = None,
+        rename: Optional[Dict[str, str]] = None,
+    ) -> pd.DataFrame:
         """
         Generate a table of cohort characteristics.
         
@@ -214,87 +513,63 @@ class EquiFlow:
         categorical : list, optional
             List of categorical variable names.
         normal : list, optional
-            List of normally distributed continuous variable names.
+            List of normally-distributed variable names.
         nonnormal : list, optional
-            List of non-normally distributed continuous variable names.
+            List of non-normally distributed variable names.
         order_vars : list, optional
-            List of variable names in the desired display order. Variables not listed
-            will be displayed after the ordered ones, in their original order.
+            List specifying the display order of variables.
+        order_classes : dict, optional
+            Dictionary mapping variable names to category order lists.
+        limit : int or dict, optional
+            Maximum categories to display per variable.
         decimals : int, optional
-            Number of decimal places for rounding.
+            Number of decimal places.
         format_cat : str, optional
-            Format for categorical variables ('N (%)', 'N', or '%').
+            Format for categorical variables.
         format_normal : str, optional
-            Format for normal variables ('Mean ± SD', 'Mean', or 'SD').
+            Format for normal variables.
         format_nonnormal : str, optional
-            Format for non-normal variables ('Median [IQR]', 'Mean', or 'SD').
+            Format for non-normal variables.
         thousands_sep : bool, optional
-            Whether to use thousands separators in numbers.
+            Whether to use thousands separators.
         missingness : bool, optional
-            Whether to include missingness information.
+            Whether to show missingness statistics.
         label_suffix : bool, optional
-            Whether to add descriptive suffixes to variable labels.
+            Whether to add format suffixes to labels.
         rename : dict, optional
-            Dictionary mapping variable names to display names.
+            Variable name mappings.
             
         Returns
         -------
         pd.DataFrame
-            Table of cohort characteristics
+            Table of characteristics for each cohort.
         """
         if len(self._dfs) < 2:
-            raise ValueError("At least two cohorts must be provided. Please use add_exclusion() to add exclusions")
+            raise ValueError("At least two cohorts must be provided.")
         
-        if categorical is None:
-            categorical = self.categorical
-
-        if normal is None:
-            normal = self.normal
-
-        if nonnormal is None:
-            nonnormal = self.nonnormal
-            
-        if order_vars is None:
-            order_vars = self.order_vars
-
-        if decimals is None:
-            decimals = self.decimals
-
-        if format_cat is None:
-            format_cat = self.format_cat
-
-        if format_normal is None:
-            format_normal = self.format_normal
-
-        if format_nonnormal is None:
-            format_nonnormal = self.format_nonnormal
-
-        if thousands_sep is None:
-            thousands_sep = self.thousands_sep
-
-        if missingness is None:
-            missingness = self.missingness
-
-        if label_suffix is None:
-            label_suffix = self.label_suffix
-
-        if rename is None:
-            rename = self.rename
-
-        if order_classes is None:
-            order_classes = self.order_classes
-            
-        if limit is None:
-            limit = self.limit
-    
-
+        # Use instance defaults if not specified
+        categorical = categorical if categorical is not None else self.categorical
+        normal = normal if normal is not None else self.normal
+        nonnormal = nonnormal if nonnormal is not None else self.nonnormal
+        order_vars = order_vars if order_vars is not None else self.order_vars
+        order_classes = order_classes if order_classes is not None else self.order_classes
+        limit = limit if limit is not None else self.limit
+        decimals = decimals if decimals is not None else self.decimals
+        format_cat = format_cat if format_cat is not None else self.format_cat
+        format_normal = format_normal if format_normal is not None else self.format_normal
+        format_nonnormal = format_nonnormal if format_nonnormal is not None else self.format_nonnormal
+        thousands_sep = thousands_sep if thousands_sep is not None else self.thousands_sep
+        missingness = missingness if missingness is not None else self.missingness
+        label_suffix = label_suffix if label_suffix is not None else self.label_suffix
+        rename = rename if rename is not None else self.rename
+        
         self.table_characteristics = TableCharacteristics(
             dfs=self._dfs,
             categorical=categorical,
             normal=normal,
             nonnormal=nonnormal,
             order_vars=order_vars,
-            order_classes=order_classes, 
+            order_classes=order_classes,
             limit=limit,
             decimals=decimals,
             format_cat=format_cat,
@@ -305,2629 +580,2426 @@ class EquiFlow:
             label_suffix=label_suffix,
             rename=rename,
         )
-        
         return self.table_characteristics.view()
-    
-  def view_table_drifts(self,
-                    drifts_by_class: Optional[bool] = False,
-                    categorical: Optional[list] = None,
-                    normal: Optional[list] = None,
-                    nonnormal: Optional[list] = None,
-                    order_vars: Optional[list] = None,
-                    limit: Optional[Union[int, dict]] = None,  # New parameter
-                    order_classes: Optional[dict] = None,  # New parameter
-                    decimals: Optional[int] = None,
-                    missingness: Optional[bool] = None,
-                    rename: Optional[dict] = None) -> pd.DataFrame:
-    """
-    Generate a table of standardized mean differences (drifts).
-    
-    Parameters
-    ----------
-    drifts_by_class : bool, default=False
-        Whether to calculate drifts by variable class instead of individual values.
-    categorical : list, optional
-        List of categorical variable names.
-    normal : list, optional
-        List of normally distributed continuous variable names.
-    nonnormal : list, optional
-        List of non-normally distributed continuous variable names.
-    order_vars : list, optional
-        List of variable names in the desired display order. Variables not listed
-        will be displayed after the ordered ones, in their original order.
-    limit : int or dict, optional
-        Maximum number of classes to display for categorical variables. Can be an
-        integer to apply to all variables or a dictionary mapping variable names to
-        individual limits. For binary variables, use limit=1 to show only one class.
-    order_classes : dict, optional
-        Dictionary mapping variable names to lists specifying the order of classes.
-        For example, {'race': ['White', 'Black', 'Asian', 'Other']} will display
-        race categories in that order.
-    decimals : int, optional
-        Number of decimal places for rounding.
-    missingness : bool, optional
-        Whether to include missingness information.
-    rename : dict, optional
-        Dictionary mapping variable names to display names.
+
+    def view_table_drifts(
+        self,
+        categorical: Optional[List[str]] = None,
+        normal: Optional[List[str]] = None,
+        nonnormal: Optional[List[str]] = None,
+        order_vars: Optional[List[str]] = None,
+        order_classes: Optional[Dict[str, List[str]]] = None,
+        limit: Optional[Union[int, Dict[str, int]]] = None,
+        decimals: Optional[int] = None,
+        missingness: Optional[bool] = None,
+        rename: Optional[Dict[str, str]] = None,
+    ) -> pd.DataFrame:
+        """
+        Generate a table of standardized mean differences (SMDs/drifts).
         
-    Returns
-    -------
-    pd.DataFrame
-        Table of standardized mean differences between cohorts
-    """
-    if len(self._dfs) < 2:
-        raise ValueError("At least two cohorts must be provided. Please use add_exclusion() to add exclusions")
-
-    if categorical is None:
-        categorical = self.categorical
-
-    if normal is None:
-        normal = self.normal
-
-    if nonnormal is None:
-        nonnormal = self.nonnormal
+        SMDs quantify how much the distribution of each variable changes
+        between consecutive cohorts, helping identify demographic drift
+        during cohort selection.
         
-    if order_vars is None:
-        order_vars = self.order_vars
+        Parameters
+        ----------
+        categorical : list, optional
+            List of categorical variable names.
+        normal : list, optional
+            List of normally-distributed variable names.
+        nonnormal : list, optional
+            List of non-normally distributed variable names.
+        order_vars : list, optional
+            List specifying the display order of variables.
+        order_classes : dict, optional
+            Dictionary mapping variable names to category order lists.
+        limit : int or dict, optional
+            Maximum categories to display per variable.
+        decimals : int, optional
+            Number of decimal places for SMD values.
+        missingness : bool, optional
+            Whether to include missingness in calculations.
+        rename : dict, optional
+            Variable name mappings.
+            
+        Returns
+        -------
+        pd.DataFrame
+            Table of SMD values between consecutive cohorts.
+        """
+        if len(self._dfs) < 2:
+            raise ValueError("At least two cohorts must be provided.")
         
-    if limit is None:
-        limit = self.limit
+        categorical = categorical if categorical is not None else self.categorical
+        normal = normal if normal is not None else self.normal
+        nonnormal = nonnormal if nonnormal is not None else self.nonnormal
+        order_vars = order_vars if order_vars is not None else self.order_vars
+        order_classes = order_classes if order_classes is not None else self.order_classes
+        limit = limit if limit is not None else self.limit
+        decimals = decimals if decimals is not None else self.smd_decimals
+        missingness = missingness if missingness is not None else self.missingness
+        rename = rename if rename is not None else self.rename
         
-    if order_classes is None:
-        order_classes = self.order_classes
-
-    if decimals is None:
-        decimals = self.decimals
-
-    if missingness is None:
-        missingness = self.missingness
-
-    if rename is None:
-        rename = self.rename
-
-    self.table_drifts = TableDrifts(
-        dfs=self._dfs,
-        categorical=categorical,
-        normal=normal,
-        nonnormal=nonnormal,
-        order_vars=order_vars,
-        limit=limit,  # Pass limit parameter
-        order_classes=order_classes,  # Pass order_classes parameter
-        decimals=decimals,
-        missingness=missingness,
-        rename=rename,
-    )
-
-    if drifts_by_class:
-        return self.table_drifts.view_simple()
-    
-    else:
+        self.table_drifts = TableDrifts(
+            dfs=self._dfs,
+            categorical=categorical,
+            normal=normal,
+            nonnormal=nonnormal,
+            order_vars=order_vars,
+            order_classes=order_classes,
+            limit=limit,
+            decimals=decimals,
+            missingness=missingness,
+            rename=rename,
+        )
         return self.table_drifts.view()
-  
-  def view_table_pvalues(self,
-                      categorical: Optional[list] = None,
-                      normal: Optional[list] = None,
-                      nonnormal: Optional[list] = None,
-                      order_vars: Optional[list] = None,
-                      limit: Optional[Union[int, dict]] = None,  # New parameter
-                      order_classes: Optional[dict] = None,  # New parameter
-                      alpha: Optional[float] = 0.05,
-                      decimals: Optional[int] = 3,
-                      min_n_expected: Optional[int] = 5,
-                      min_samples: Optional[int] = 30,
-                      rename: Optional[dict] = None) -> pd.DataFrame:
-    """
-    Generate a table of p-values between consecutive cohorts using appropriate statistical tests.
-    
-    Parameters
-    ----------
-    categorical : list, optional
-        List of categorical variable names
-    normal : list, optional
-        List of normally distributed continuous variable names
-    nonnormal : list, optional
-        List of non-normally distributed continuous variable names
-    order_vars : list, optional
-        List of variable names in the desired display order. Variables not listed
-        will be displayed after the ordered ones, in their original order.
-    limit : int or dict, optional
-        Maximum number of classes to display for categorical variables. Can be an
-        integer to apply to all variables or a dictionary mapping variable names to
-        individual limits. For binary variables, use limit=1 to show only one class.
-    order_classes : dict, optional
-        Dictionary mapping variable names to lists specifying the order of classes.
-        For example, {'race': ['White', 'Black', 'Asian', 'Other']} will display
-        race categories in that order.
-    alpha : float, optional
-        Significance level (default: 0.05)
-    decimals : int, optional
-        Number of decimal places for p-values (default: 3)
-    min_n_expected : int, optional
-        Minimum expected count for Chi-square validity (default: 5)
-    min_samples : int, optional
-        Threshold for small sample considerations (default: 30)
-    rename : dict, optional
-        Dictionary mapping original variable names to display names
-        
-    Returns
-    -------
-    pd.DataFrame
-        Table of p-values between consecutive cohorts
-    """
-    if len(self._dfs) < 2:
-        raise ValueError("At least two cohorts must be provided. Please use add_exclusion() to add exclusions")
-    
-    if categorical is None:
-        categorical = self.categorical
-    
-    if normal is None:
-        normal = self.normal
-    
-    if nonnormal is None:
-        nonnormal = self.nonnormal
-        
-    if order_vars is None:
-        order_vars = self.order_vars
-        
-    if limit is None:
-        limit = self.limit
-        
-    if order_classes is None:
-        order_classes = self.order_classes
-    
-    if decimals is None:
-        decimals = self.decimals
-    
-    if rename is None:
-        rename = self.rename
-    
-    self.table_pvalues = TablePValues(
-        dfs=self._dfs,
-        categorical=categorical,
-        normal=normal,
-        nonnormal=nonnormal,
-        order_vars=order_vars,
-        limit=limit,  # Pass limit parameter
-        order_classes=order_classes,  # Pass order_classes parameter
-        alpha=alpha,
-        decimals=decimals,
-        min_n_expected=min_n_expected,
-        min_samples=min_samples,
-        rename=rename,
-    )
-    
-    return self.table_pvalues.view()
-  
 
-  def plot_flows(self,
-               new_cohort_labels: Optional[list] = None,
-               exclusion_labels: Optional[list] = None,
-               box_width: Optional[int] = 2.5,
-               box_height: Optional[int] = 1,
-               plot_dists: Optional[bool] = True,
-               smds: Optional[bool] = True,
-               legend: Optional[bool] = True,
-               legend_with_vars: Optional[bool] = True,
-               output_folder: Optional[str] = 'imgs',
-               output_file: Optional[str] = 'flow_diagram',
-               display_flow_diagram: Optional[bool] = True,
-               # Add new color customization parameters
-               cohort_node_color: Optional[str] = 'white',
-               exclusion_node_color: Optional[str] = 'floralwhite',
-               categorical_bar_colors: Optional[list] = None,
-               missing_value_color: Optional[str] = 'lightgray',
-               continuous_var_color: Optional[str] = 'lavender',
-               edge_color: Optional[str] = 'black',
-               ) -> None:
-    """
-    Create and display a flow diagram of the cohort exclusion process.
-    
-    Parameters
-    ----------
-    new_cohort_labels : list, optional
-        Labels for each cohort after exclusions.
-    exclusion_labels : list, optional
-        Labels for each exclusion step.
-    box_width : int, optional, default=2.5
-        Width of the boxes in the flow diagram.
-    box_height : int, optional, default=1
-        Height of the boxes in the flow diagram.
-    plot_dists : bool, optional, default=True
-        Whether to plot variable distributions for each cohort.
-    smds : bool, optional, default=True
-        Whether to display standardized mean differences between cohorts.
-    legend : bool, optional, default=True
-        Whether to display a legend for the distribution plots.
-    legend_with_vars : bool, optional, default=True
-        Whether to include variable names in the legend.
-    output_folder : str, optional, default='imgs'
-        Folder where output files will be saved.
-    output_file : str, optional, default='flow_diagram'
-        Base name for output files (without extension).
-    display_flow_diagram : bool, optional, default=True
-        Whether to display the flow diagram after creating it.
-    cohort_node_color : str, optional, default='white'
-        Color for cohort nodes in the flow diagram.
-    exclusion_node_color : str, optional, default='floralwhite'
-        Color for exclusion nodes in the flow diagram.
-    categorical_bar_colors : list, optional
-        List of colors for categorical variable bars.
-    missing_value_color : str, optional, default='lightgray'
-        Color for missing value bars.
-    continuous_var_color : str, optional, default='lavender'
-        Color for continuous variable bars.
-    edge_color : str, optional, default='black'
-        Color for edges (arrows) in the flow diagram.
-    """
-    
-    if len(self._dfs) < 2: 
-        raise ValueError("At least two cohorts must be provided. Please use add_exclusion() to add exclusions")
-       
-    
-    if new_cohort_labels is None:
-        new_cohort_labels = self.new_cohort_labels.values()
-        new_cohort_labels = ["___ patients\n" + label for label in new_cohort_labels]
-
-    if exclusion_labels is None:
-        exclusion_labels = self.exclusion_labels.values()
-        exclusion_labels = ["___ patients excluded for\n" + label for label in exclusion_labels]
-
-    plot_table_flows = TableFlows(
-        dfs=self._dfs,
-        label_suffix=True,
-        thousands_sep=True,
-    )
-
-    plot_table_characteristics = TableCharacteristics(
-        dfs=self._dfs,
-        categorical=self.categorical,
-        normal=self.normal,
-        nonnormal=self.nonnormal,
-        decimals=self.decimals,
-        format_cat='%',
-        format_normal=self.format_normal,
-        format_nonnormal=self.format_nonnormal,
-        thousands_sep=False,
-        missingness=True,
-        label_suffix=True,
-        rename=self.rename,
-    )
-
-    plot_table_drifts = TableDrifts(
-        dfs=self._dfs,
-        categorical=self.categorical,
-        normal=self.normal,
-        nonnormal=self.nonnormal,
-        decimals=self.decimals,
-        missingness=self.missingness,
-        rename=self.rename,
-    )
-     
-    self.flow_diagram = FlowDiagram(
-        table_flows=plot_table_flows,
-        table_characteristics=plot_table_characteristics,
-        table_drifts=plot_table_drifts,
-        new_cohort_labels=new_cohort_labels,
-        exclusion_labels=exclusion_labels,
-        box_width=box_width,
-        box_height=box_height,
-        plot_dists=plot_dists,
-        smds=smds,
-        legend=legend,
-        legend_with_vars=legend_with_vars,
-        output_folder=output_folder,
-        output_file=output_file,
-        display_flow_diagram=display_flow_diagram,
-        cohort_node_color=cohort_node_color,
-        exclusion_node_color=exclusion_node_color,
-        categorical_bar_colors=categorical_bar_colors,
-        missing_value_color=missing_value_color,
-        continuous_var_color=continuous_var_color,
-        edge_color=edge_color,
-    )
-
-    self.flow_diagram.view()
-
-class TableFlows:
-  def __init__(
+    def view_table_pvalues(
         self,
-        dfs: list,
-        label_suffix: Optional[bool] = True,
-        thousands_sep: Optional[bool] = True,
-    ) -> None:
-
-    if not isinstance(dfs, list) or len(dfs) < 2:
-      raise ValueError("dfs must be a list with length ≥ 2")
-    
-    if not isinstance(label_suffix, bool):
-      raise ValueError("label_suffix must be a boolean")
-    
-    self._dfs = dfs
-    self._label_suffix = label_suffix
-    self._thousands_sep = thousands_sep
-
-
-  def view(self):
-
-    table = pd.DataFrame(columns=['Cohort Flow', '', 'N',])
-    rows = []
-
-    for i in range(len(self._dfs) - 1):
-
-      df_0 = self._dfs[i]
-      df_1 = self._dfs[i+1]
-      label = f"{i} to {i+1}"
-
-      if self._label_suffix:
-        suffix = ', n'
-
-      else:
-        suffix = ''
-
-      if self._thousands_sep:
-        n0_string = f"{len(df_0):,}"
-        n1_string = f"{len(df_0) - len(df_1):,}"
-        n2_string = f"{len(df_1):,}"
-
-      else:
-        n0_string = len(df_0)
-        n1_string = len(df_0) - len(df_1)
-        n2_string = len(df_1)
-
-
-      rows.append({'Cohort Flow': label,
-                   '': 'Initial' + suffix,
-                   'N': n0_string})
-      
-      rows.append({'Cohort Flow': label,
-                   '': 'Removed' + suffix,
-                   'N': n1_string})
-      
-      rows.append({'Cohort Flow': label,
-                   '': 'Result' + suffix,
-                   'N': n2_string})
-
-    table = pd.DataFrame(rows)
-
-    table = table.pivot(index='', columns='Cohort Flow', values='N')
-
-    return table
-  
-
-class TableCharacteristics:
-  def __init__(
-      self,
-      dfs: list,
-      categorical: Optional[list] = None,
-      normal: Optional[list] = None,
-      nonnormal: Optional[list] = None,
-      order_vars: Optional[list] = None, 
-      limit: Optional[Union[int, dict]] = None,  # New parameter
-      order_classes: Optional[dict] = None,  # New parameter
-      decimals: Optional[int] = 1,
-      format_cat: Optional[str] = 'N (%)',
-      format_normal: Optional[str] = 'Mean ± SD',
-      format_nonnormal: Optional[str] = 'Median [IQR]',
-      thousands_sep: Optional[bool] = True,
-      missingness: Optional[bool] = True,
-      label_suffix: Optional[bool] = True,
-      rename: Optional[dict] = None,
-  ) -> None:
-        
-    if not isinstance(dfs, list) or len(dfs) < 2:
-        raise ValueError("dfs must be a list with length ≥ 2")
-    
-    if (categorical is None) & (normal is None) & (nonnormal is None):
-        raise ValueError("At least one of categorical, normal, or nonnormal must be provided")
-       
-    if (categorical is not None) & (not isinstance(categorical, list)):
-        raise ValueError("categorical must be a list")
-
-    if (normal is not None) & (not isinstance(normal, list)):
-        raise ValueError("normal must be a list")
-    
-    if (nonnormal is not None) & (not isinstance(nonnormal, list)):
-        raise ValueError("nonnormal must be a list")
-    
-    if not isinstance(decimals, int) or decimals < 0:
-        raise ValueError("decimals must be a non-negative integer")
-    
-    if format_cat not in ['%', 'N', 'N (%)']:
-        raise ValueError("format must be '%', 'N', or 'N (%)'")
-    
-    if format_normal not in ['Mean ± SD', 'Mean', 'SD']:
-        raise ValueError("format must be 'Mean ± SD' or 'Mean' or 'SD'")
-    
-    if format_nonnormal not in ['Median [IQR]', 'Mean', 'SD']:
-        raise ValueError("format must be 'Median [IQR]' or 'Mean' or 'SD'")
-    
-    if not isinstance(thousands_sep, bool):
-        raise ValueError("thousands_sep must be a boolean")
-    
-    if not isinstance(missingness, bool):
-        raise ValueError("missingness must be a boolean")
-    
-    if not isinstance(label_suffix, bool):
-        raise ValueError("label_suffix must be a boolean")
-    
-    if (order_vars is not None) & (not isinstance(order_vars, list)):
-        raise ValueError("order_vars must be a list")
-        
-    if (limit is not None) & (not (isinstance(limit, int) or isinstance(limit, dict))):
-        raise ValueError("limit must be an integer or a dictionary")
-        
-    if (order_classes is not None) & (not isinstance(order_classes, dict)):
-        raise ValueError("order_classes must be a dictionary")
-        
-    self._dfs = dfs
-
-    if categorical is None:
-        self._categorical = []
-    else:
-        self._categorical = categorical
-    
-    if normal is None:
-        self._normal = []
-    else:
-        self._normal = normal
-    
-    if nonnormal is None:
-        self._nonnormal = []
-    else:
-        self._nonnormal = nonnormal
-        
-    self._order_vars = order_vars
-    self._limit = limit  # Store the limit
-    self._order_classes = order_classes  # Store the order_classes
-    self._decimals = decimals
-    self._missingness = missingness
-    self._format_cat = format_cat
-    self._format_normal = format_normal
-    self._format_nonnormal = format_nonnormal
-    self._thousands_sep = thousands_sep
-    self._label_suffix = label_suffix
-    
-    if rename is not None:
-        self._rename = rename
-    else:
-        self._rename = dict()
-
-    if rename is not None:
-      if self._label_suffix:
-          self._renamed_categorical = [
-             self._rename[c] + ', ' + self._format_cat if c in self._rename.keys() \
-              else c + ', ' + self._format_cat for c in self._categorical
-          ]
-          
-          self._renamed_normal = [
-              self._rename[n] + ', ' + self._format_normal if n in self._rename.keys() \
-              else n + ', ' + self._format_normal for n in self._normal
-          ]
-
-          self._renamed_nonnormal = [
-              self._rename[nn] + ', ' + self._format_nonnormal if nn in self._rename.keys() \
-              else nn + ', ' + self._format_nonnormal for nn in self._nonnormal
-          ]
-
-
-      else:
-        self._renamed_categorical = [
-            self._rename[c] if c in self._rename.keys() else c for c in self._categorical
-        ]
-
-        self._renamed_normal = [
-            self._rename[n] if n in self._rename.keys() else n for n in self._normal
-        ]
-
-        self._renamed_nonnormal = [
-            self._rename[nn] if nn in self._rename.keys() else nn for nn in self._nonnormal
-        ]
-
-    else:
-      if self._label_suffix:
-        self._renamed_categorical = [c + ', ' + self._format_cat for c in self._categorical]
-        self._renamed_normal = [n + ', ' + self._format_normal for n in self._normal]
-        self._renamed_nonnormal = [nn + ', ' + self._format_nonnormal for nn in self._nonnormal]
-      else:
-        self._renamed_categorical = self._categorical
-        self._renamed_normal = self._normal
-        self._renamed_nonnormal = self._nonnormal
-
-
-  # method to get the unique values, before any exclusion (at i=0)
-  def _get_original_uniques(self, cols):
-
-    original_uniques = dict()
-
-    # get uniques values ignoring NaNs
-    for c in cols:
-      original_uniques[c] = self._dfs[0][c].dropna().unique()
-
-    return original_uniques
-
-
-  # method to get the value counts for a given column
-  def _my_value_counts(self,
-                       df: pd.DataFrame(),
-                       original_uniques: dict,
-                       col: str,
-                      ) -> pd.DataFrame(): # type: ignore
-
-    o_uniques = original_uniques[col]
-    counts = pd.DataFrame(columns=[col], index=o_uniques)
-
-    # get the number of observations, based on whether we want to include missingness
-    if self._missingness:
-      n = len(df)
-    else:
-      n = len(df) - df[col].isnull().sum() # denominator will be the number of non-missing observations
-
-    for o in o_uniques:
-      if self._format_cat == '%':
-        counts.loc[o,col] = ((df[col] == o).sum() / n * 100).round(self._decimals)
-  
-      elif self._format_cat == 'N':
-        if self._thousands_sep:
-          counts.loc[o,col] = f"{(df[col] == o).sum():,}"
-        else:
-          counts.loc[o,col] = (df[col] == o).sum()
-   
-      elif self._format_cat == 'N (%)':
-        n_counts = (df[col] == o).sum()
-        perc_counts = (n_counts / n * 100).round(self._decimals)
-        if self._thousands_sep:
-          counts.loc[o,col] = f"{n_counts:,} ({perc_counts})"
-        else:
-          counts.loc[o,col] = f"{n_counts} ({perc_counts})"
-
-      else:
-        raise ValueError("format must be '%', 'N', or 'N (%)'")
-
-    return counts 
-  
-  # method to report distribution of normal variables
-  def _normal_vars_dist(self,
-                        df: pd.DataFrame(),
-                        col: str,
-                        df_dists: pd.DataFrame(),
-                        ) -> pd.DataFrame():
-    
-    df.loc[:,col] = pd.to_numeric(df[col], errors='raise')
-    
-    if self._format_normal == 'Mean ± SD':
-      col_mean = np.round(df[col].mean(), self._decimals)
-      col_std = np.round(df[col].std(), self._decimals)
-      df_dists.loc[(col, ' '), 'value'] = f"{col_mean} ± {col_std}"
-
-    elif self._format_normal == 'Mean':
-      col_mean = np.round(df[col].mean(), self._decimals)
-      df_dists.loc[(col, ' '), 'value'] = col_mean
-    
-    elif self._format_normal == 'SD':
-      col_std = np.round(df[col].std(), self._decimals)
-      df_dists.loc[(col, ' '), 'value'] = col_std
-
-    return df_dists
-  
-  def _nonnormal_vars_dist(self,
-                           df: pd.DataFrame(),
-                           col: str,
-                           df_dists: pd.DataFrame(),
-                          ) -> pd.DataFrame():
-     
-    df.loc[:,col] = pd.to_numeric(df[col], errors='raise')
-
-    if self._format_nonnormal == 'Mean':
-      col_mean = np.round(df[col].mean(), self._decimals)
-      df_dists.loc[(col, ' '), 'value'] = col_mean
-
-    elif self._format_nonnormal == 'Median [IQR]':
-      col_median = np.round(df[col].median(), self._decimals)
-      col_q1 = np.round(df[col].quantile(0.25), self._decimals)
-      col_q3 = np.round(df[col].quantile(0.75), self._decimals)
-
-      df_dists.loc[(col, ' '), 'value'] = f"{col_median} [{col_q1}, {col_q3}]"
-
-    elif self._format_nonnormal == 'SD':
-      col_std = np.round(df[col].std(), self._decimals)
-      df_dists.loc[(col, ' '), 'value'] = col_std
-
-    return df_dists
-  
-
-  # method to add missing counts to the table
-  def _add_missing_counts(self,
-                           df: pd.DataFrame(),
-                           col: str,
-                           df_dists: pd.DataFrame(),
-                           ) -> pd.DataFrame(): # type: ignore
-
-    n = len(df)
-
-    if self._format_cat == '%':
-      df_dists.loc[(col,'Missing'),'value'] = (df[col].isnull().sum() / n * 100).round(self._decimals)
-    
-    elif self._format_cat == 'N':
-      if self._thousands_sep:
-        df_dists.loc[(col,'Missing'),'value'] = f"{df[col].isnull().sum():,}"
-      else:
-        df_dists.loc[(col,'Missing'),'value'] = df[col].isnull().sum()
-
-    elif self._format_cat == 'N (%)':
-      n_missing = df[col].isnull().sum()
-      perc_missing = df[col].isnull().sum() / n * 100
-      if self._thousands_sep:
-        df_dists.loc[(col,'Missing'),'value'] = f"{n_missing:,} ({(perc_missing).round(self._decimals)})"
-      else: 
-        df_dists.loc[(col,'Missing'),'value'] = f"{n_missing} ({(perc_missing).round(self._decimals)})"
-
-    else:
-      raise ValueError("format must be '%', 'N', or 'N (%)'")
-
-    return df_dists
-  
-  
-  # method to add overall counts to the table
-  def _add_overall_counts(self,
-                           df,
-                           df_dists
-                           ) -> pd.DataFrame(): # type: ignore
-
-    if self._thousands_sep:
-      df_dists.loc[('Overall', ' '), 'value'] = f"{len(df):,}"
-    else:
-      df_dists.loc[('Overall', ' '), 'value'] = len(df)
-
-
-    return df_dists
-  
-  # method to add label_suffix to the table
-  def _add_label_suffix(self,
-                         col: str,
-                         df_dists: pd.DataFrame(),
-                         suffix: str,
-                         ) -> pd.DataFrame(): # type: ignore
-
-    new_col = col + suffix
-    df_dists = df_dists.rename(index={col: new_col}) 
-
-    return df_dists
-  
-  # method to rename columns
-  def _rename_columns(self,
-                       df_dists: pd.DataFrame(),
-                       col: str,
-                      ) -> pd.DataFrame():
-    
-    return self._rename[col], df_dists.rename(index={col: self._rename[col]})
-  
-  def view(self):
-    """Generate and return the characteristic table with variables in the specified order."""
-    table = pd.DataFrame()
-
-    # Get the unique values, before any exclusion, for categorical variables
-    original_uniques = self._get_original_uniques(self._categorical)
-    
-    # Process each cohort
-    for i, df in enumerate(self._dfs):
-        index = pd.MultiIndex(levels=[[], []], codes=[[], []], names=['variable', 'index'])
-        df_dists = pd.DataFrame(columns=['value'], index=index)
-        
-        # Function to process each variable
-        def process_variable(col, var_type):
-          nonlocal df_dists
-          
-          if var_type == 'categorical':
-              counts = self._my_value_counts(df, original_uniques, col)
-              melted_counts = pd.melt(counts.reset_index(), id_vars=['index']) \
-                                .set_index(['variable', 'index'])
-              df_dists = pd.concat([df_dists, melted_counts], axis=0)
-          elif var_type == 'normal':
-              df_dists = self._normal_vars_dist(df, col, df_dists)
-          elif var_type == 'nonnormal':
-              df_dists = self._nonnormal_vars_dist(df, col, df_dists)
-          
-          # Add missing counts if requested
-          if self._missingness:
-              df_dists = self._add_missing_counts(df, col, df_dists)
-          
-          # Rename if applicable
-          if col in self._rename.keys():
-              col, df_dists = self._rename_columns(df_dists, col)
-          
-          # Add suffix if requested
-          if self._label_suffix:
-              if var_type == 'categorical':
-                  df_dists = self._add_label_suffix(col, df_dists, ', ' + self._format_cat)
-              elif var_type == 'normal':
-                  df_dists = self._add_label_suffix(col, df_dists, ', ' + self._format_normal)
-              elif var_type == 'nonnormal':
-                  df_dists = self._add_label_suffix(col, df_dists, ', ' + self._format_nonnormal)
-      
-        
-        # Determine variable processing order
-        all_vars = set(self._categorical + self._normal + self._nonnormal)
-        
-        if self._order_vars is not None:
-            # Process variables in the specified order
-            ordered_vars = [v for v in self._order_vars if v in all_vars]
-            # Add any remaining variables not in order_vars
-            remaining_vars = [v for v in self._categorical + self._normal + self._nonnormal 
-                            if v not in ordered_vars]
-            processing_order = ordered_vars + remaining_vars
-        else:
-            # Use the default order (categorical, then normal, then nonnormal)
-            processing_order = self._categorical + self._normal + self._nonnormal
-        
-        # Process variables in the determined order
-        for col in processing_order:
-            if col in self._categorical:
-                process_variable(col, 'categorical')
-            elif col in self._normal:
-                process_variable(col, 'normal')
-            elif col in self._nonnormal:
-                process_variable(col, 'nonnormal')
-        
-        # Add overall counts
-        df_dists = self._add_overall_counts(df, df_dists)
-        
-        # Rename column for this cohort and add to table
-        df_dists.rename(columns={'value': i}, inplace=True)
-        table = pd.concat([table, df_dists], axis=1)
-    
-    # Add super header
-    table = table.set_axis(
-          pd.MultiIndex.from_product([['Cohort'], table.columns]),
-          axis=1)
-      
-    # Rename indexes
-    table.index.names = ['Variable', 'Value']
-    
-    # Create mapping from display names to original names
-    # This will help with handling order_classes and limit
-    display_to_orig = {}
-    for var in self._categorical + self._normal + self._nonnormal:
-        display_name = var
-        if var in self._rename:
-            display_name = self._rename[var]
-        
-        if self._label_suffix:
-            if var in self._categorical:
-                display_name = display_name + ', ' + self._format_cat
-            elif var in self._normal:
-                display_name = display_name + ', ' + self._format_normal
-            elif var in self._nonnormal:
-                display_name = display_name + ', ' + self._format_nonnormal
-        
-        display_to_orig[display_name] = var
-    
-    # Apply order_classes parameter to control the order of categorical values
-    if self._order_classes is not None:
-        for var_orig, class_order in self._order_classes.items():
-            # Find the display name for this variable
-            var_display = None
-            for display_name, orig_name in display_to_orig.items():
-                if orig_name == var_orig:
-                    var_display = display_name
-                    break
-            
-            if var_display is not None and var_display in table.index.get_level_values(0):
-                # Get all rows for this variable
-                mask = table.index.get_level_values(0) == var_display
-                var_rows = table.loc[mask]
-                
-                # Process class ordering
-                var_values = list(var_rows.index.get_level_values(1))
-                
-                # Keep missing at the end if present
-                missing_present = 'Missing' in var_values
-                if missing_present:
-                    var_values.remove('Missing')
-                
-                # Create a custom sort key function
-                def get_order_key(value):
-                    if value in class_order:
-                        return class_order.index(value)
-                    else:
-                        # Put values not in class_order at the end
-                        return len(class_order) + var_values.index(value)
-                
-                # Sort the values according to the order_classes
-                ordered_values = sorted(var_values, key=get_order_key)
-                
-                # Add Missing back at the end if it was present
-                if missing_present:
-                    ordered_values.append('Missing')
-                
-                # Create a new index with the ordered values
-                ordered_idx = [(var_display, val) for val in ordered_values]
-                
-                # Reindex only this variable's rows
-                var_ordered_rows = var_rows.reindex(ordered_idx)
-                
-                # Update the table
-                table = table.drop(var_rows.index)
-                table = pd.concat([table, var_ordered_rows])
-    
-    # Apply limit parameter to restrict number of classes displayed
-    if self._limit is not None:
-        # Process each categorical variable
-        for var_orig in self._categorical:
-            # Find the display name for this variable
-            var_display = None
-            for display_name, orig_name in display_to_orig.items():
-                if orig_name == var_orig:
-                    var_display = display_name
-                    break
-            
-            if var_display is not None and var_display in table.index.get_level_values(0):
-                # Determine the limit for this variable
-                var_limit = None
-                if isinstance(self._limit, int):
-                    var_limit = self._limit
-                elif isinstance(self._limit, dict):
-                    if var_orig in self._limit:
-                        var_limit = self._limit[var_orig]
-                    elif var_display in self._limit:
-                        var_limit = self._limit[var_display]
-                
-                if var_limit is not None:
-                    # Get all rows for this variable
-                    mask = table.index.get_level_values(0) == var_display
-                    var_rows = table.loc[mask]
-                    
-                    # Get all non-missing values
-                    non_missing_mask = var_rows.index.get_level_values(1) != 'Missing'
-                    non_missing_rows = var_rows.loc[non_missing_mask]
-                    
-                    # Get missing row if it exists
-                    missing_mask = var_rows.index.get_level_values(1) == 'Missing'
-                    missing_rows = var_rows.loc[missing_mask]
-                    
-                    # Only apply limit if we have more non-missing values than the limit
-                    if len(non_missing_rows) > var_limit:
-                        # Keep only the first var_limit rows
-                        limited_rows = non_missing_rows.iloc[:var_limit]
-                        
-                        # Add back the missing row if it exists
-                        if not missing_rows.empty:
-                            limited_rows = pd.concat([limited_rows, missing_rows])
-                        
-                        # Update the table
-                        table = table.drop(var_rows.index)
-                        table = pd.concat([table, limited_rows])
-    
-    # Handle sorting of variables
-    if self._order_vars is not None:
-        # Move 'Overall' to the top
-        overall_mask = table.index.get_level_values(0) == 'Overall'
-        overall_rows = table.loc[overall_mask]
-        non_overall_rows = table.loc[~overall_mask]
-        
-        # Create sort key function for variable names
-        def get_var_sort_key(var_name):
-            # Get original name if possible
-            orig_name = display_to_orig.get(var_name, var_name)
-            
-            if orig_name in self._order_vars:
-                return (0, self._order_vars.index(orig_name))
-            else:
-                return (1, var_name)
-        
-        # Get unique variable names and sort them
-        var_names = sorted(non_overall_rows.index.get_level_values(0).unique(),
-                          key=get_var_sort_key)
-        
-        # Reconstruct table in the sorted order
-        result = pd.DataFrame()
-        
-        # Add 'Overall' at the top
-        if not overall_rows.empty:
-            result = pd.concat([result, overall_rows])
-        
-        # Add each variable in sorted order
-        for var in var_names:
-            var_mask = non_overall_rows.index.get_level_values(0) == var
-            result = pd.concat([result, non_overall_rows.loc[var_mask]])
-        
-        return result
-    else:
-        # Default sorting - ensure 'Overall' is at the top
-        return table.sort_index(level=0, key=lambda x: x == 'Overall',
-                              ascending=False, sort_remaining=False)
-
-class TableDrifts():
-  def __init__(
-      self,
-      dfs: list,
-      categorical: Optional[list] = None,
-      normal: Optional[list] = None,
-      nonnormal: Optional[list] = None,
-      order_vars: Optional[list] = None,
-      limit: Optional[Union[int, dict]] = None, 
-      order_classes: Optional[dict] = None,  
-      decimals: Optional[int] = 1,
-      missingness: Optional[bool] = True,
-      rename: Optional[dict] = None,
-  ) -> None:
-    
-    if not isinstance(dfs, list) or len(dfs) < 1:
-        raise ValueError("dfs must be a list with length ≥ 1")
-    
-    if (categorical is None) & (normal is None) & (nonnormal is None):
-        raise ValueError("At least one of categorical, normal, or nonnormal must be provided")
-    
-    if (categorical is not None) & (not isinstance(categorical, list)):
-        raise ValueError("categorical must be a list")
-    
-    if (normal is not None) & (not isinstance(normal, list)):
-        raise ValueError("normal must be a list")
-    
-    if (nonnormal is not None) & (not isinstance(nonnormal, list)):
-        raise ValueError("nonnormal must be a list")
-    
-    if not isinstance(decimals, int) or decimals < 0:
-        raise ValueError("decimals must be a non-negative integer")
-    
-    if (rename is not None) & (not isinstance(rename, dict)):
-        raise ValueError("rename must be a dictionary")
-    
-    if (order_vars is not None) & (not isinstance(order_vars, list)):
-            raise ValueError("order_vars must be a list")
-    
-    if (limit is not None) & (not (isinstance(limit, int) or isinstance(limit, dict))):
-        raise ValueError("limit must be an integer or a dictionary")
-        
-    if (order_classes is not None) & (not isinstance(order_classes, dict)):
-        raise ValueError("order_classes must be a dictionary")
-        
-    self._dfs = dfs
-    if categorical is None:
-        self._categorical = []
-    else:
-        self._categorical = categorical
-
-    if normal is None:
-        self._normal = []
-    else:
-        self._normal = normal
-
-    if nonnormal is None:
-        self._nonnormal = []
-    else:
-        self._nonnormal = nonnormal
-
-    self._limit = limit 
-    self._order_classes = order_classes 
-    self._order_vars = order_vars  
-    self._decimals = decimals
-    self._missingness = missingness
-
-    if rename is None:
-        self._rename = dict()
-    else:
-        self._rename = rename
-
-    # Make rename have the same keys as the original variable names if no rename
-    for c in self._categorical + self._normal + self._nonnormal:
-        if c not in self._rename.keys():
-            self._rename[c] = c
-    
-    # Create TableFlows and TableCharacteristics instances
-    # Pass order_vars to TableCharacteristics
-    self._table_flows = TableFlows(
-        dfs,
-        label_suffix=False,
-        thousands_sep=False,
-    ).view()
-
-    self._table_characteristics = TableCharacteristics(
-        dfs,
-        categorical=self._categorical,
-        normal=self._normal,
-        nonnormal=self._nonnormal,
-        order_vars=self._order_vars,
-        limit=self._limit,  # Pass limit
-        order_classes=self._order_classes,  # Pass order_classes
-        decimals=self._decimals,
-        missingness=False,
-        format_cat='N',
-        format_normal='Mean',
-        format_nonnormal='Mean',
-        thousands_sep=False,
-        label_suffix=False,
-        rename=self._rename,
-    ).view()
-
-    # Create auxiliary tables with order_vars and new parameters
-    self._table_cat_n = TableCharacteristics(
-        dfs,
-        categorical=self._categorical,
-        normal=self._normal,
-        nonnormal=self._nonnormal,
-        order_vars=self._order_vars,
-        limit=self._limit,  # Pass limit
-        order_classes=self._order_classes,  # Pass order_classes
-        decimals=self._decimals,
-        format_cat='N',
-        format_normal='Mean',
-        format_nonnormal='Mean',
-        thousands_sep=False,
-        missingness=self._missingness,
-        label_suffix=False,
-        rename=self._rename,
-    ).view()
-
-    self._table_cat_perc = TableCharacteristics(
-        dfs,
-        categorical=self._categorical,
-        normal=self._normal,
-        nonnormal=self._nonnormal,
-        order_vars=self._order_vars,  # Pass order_vars
-        decimals=self._decimals,
-        format_cat='%',
-        format_normal='SD',
-        format_nonnormal='SD',
-        thousands_sep=False,
-        missingness=self._missingness,
-        label_suffix=False,
-        rename=self._rename,
-    ).view()
-
-
-
-  def view(self):
-
-    inverse_rename = {value: key for key, value in self._rename.items()}
-
-    table = pd.DataFrame(index=self._table_characteristics.index,
-                         columns=self._table_flows.columns)
-    
-    # Track which categorical variables we've already processed
-    processed_categorical_vars = set()
-    
-    for i, index_name in enumerate(self._table_characteristics.index):
-      for j, column_name in enumerate(self._table_flows.columns):
-        # skip if index_name is 'Overall'
-        if (index_name[0] == 'Overall'):
-          table.iloc[i,j] = ''
-          continue
-        
-        # Get the original variable name
-        orig_var = inverse_rename[index_name[0]]
-        
-        # Handle categorical variables
-        if orig_var in self._categorical:
-          # Create a unique key for this variable and column comparison
-          var_col_key = (orig_var, j)
-          
-          # Only calculate SMD once per categorical variable per column comparison
-          if var_col_key not in processed_categorical_vars:
-            # Mark this variable-column combination as processed
-            processed_categorical_vars.add(var_col_key)
-            
-            # Get all category rows for this variable (excluding 'Missing')
-            var_display_name = index_name[0]
-            
-            # Find all rows for this categorical variable
-            cat_rows = []
-            for idx in self._table_cat_n.index:
-              if idx[0] == var_display_name and idx[1] != 'Missing':
-                cat_rows.append(idx)
-            
-            if len(cat_rows) == 0:
-              table.iloc[i,j] = ''
-              continue
-              
-            # Get proportions for both cohorts for all categories
-            prop1_list = []
-            prop2_list = []
-            n1_total = 0
-            n2_total = 0
-            
-            for cat_row in cat_rows:
-              # Get counts and percentages for this category
-              n1_cat = self._table_cat_n.loc[cat_row, :].iloc[j]
-              perc1_cat = self._table_cat_perc.loc[cat_row, :].iloc[j]
-              n2_cat = self._table_cat_n.loc[cat_row, :].iloc[j+1]
-              perc2_cat = self._table_cat_perc.loc[cat_row, :].iloc[j+1]
-              
-              # Convert percentage to proportion
-              prop1_list.append(perc1_cat / 100.0)
-              prop2_list.append(perc2_cat / 100.0)
-              
-              # Accumulate total counts
-              n1_total += n1_cat
-              n2_total += n2_cat
-            
-            # Calculate overall SMD for this categorical variable
-            if len(prop1_list) == 2:  # Binary variable - use simpler calculation
-              # For binary variables, use the standard SMD formula to avoid singular matrix
-              p1 = prop1_list[0]  # Proportion of first category in cohort 1
-              p2 = prop2_list[0]  # Proportion of first category in cohort 2
-              diff = abs(p1 - p2)
-              pooled_var = (p1*(1-p1) + p2*(1-p2))/2
-              if pooled_var > 0:
-                smd = diff / np.sqrt(pooled_var)
-                if n1_total > 0 and n2_total > 0:
-                  # Apply Hedges correction for binary case
-                  j_factor = 1 - (3/(4*(n1_total + n2_total - 2) - 1))
-                  smd = j_factor * smd
-                # Clean up the result: handle -0.0 and round properly
-                smd = np.round(smd, self._decimals)
-                if smd == -0.0:
-                  smd = 0.0
-                table.iloc[i,j] = smd
-              else:
-                table.iloc[i,j] = 0.0
-            elif len(prop1_list) > 2:  # Multi-category variable - use Yang & Dalton method
-              smd = self._cat_smd(
-                prop1=prop1_list,
-                prop2=prop2_list,
-                n1=n1_total,
-                n2=n2_total,
-                unbiased=True
-              )
-              # Handle NaN and -0.0 cases
-              if pd.isna(smd) or np.isnan(smd):
-                smd = 0.0
-              elif smd == -0.0:
-                smd = 0.0
-              table.iloc[i,j] = smd
-            else:  # Single category (shouldn't happen with proper data)
-              table.iloc[i,j] = 0.0
-          else:
-            # For subsequent rows of the same categorical variable, leave blank
-            table.iloc[i,j] = ''
-        
-        # Handle continuous variables (normal and non-normal)
-        elif (orig_var in self._normal) or (orig_var in self._nonnormal):
-          mean_0 = self._table_cat_n.loc[index_name, :].iloc[j]
-          sd_0 = self._table_cat_perc.loc[index_name, :].iloc[j]
-          mean_1 = self._table_cat_n.loc[index_name, :].iloc[j+1]
-          sd_1 = self._table_cat_perc.loc[index_name, :].iloc[j+1]
-          n_0 = self._table_characteristics.loc[('Overall', ' '), :].iloc[j]
-          n_1 = self._table_characteristics.loc[('Overall', ' '), :].iloc[j+1]
-          smd = self._cont_smd(
-             mean1=mean_0,
-             mean2=mean_1,
-             sd1=sd_0,
-             sd2=sd_1,
-             n1=n_0,
-             n2=n_1,
-             unbiased=True
-          )
-          # Handle -0.0 case
-          if smd == -0.0:
-            smd = 0.0
-          table.iloc[i,j] = smd
-        else:
-          # For missing rows or other cases, leave blank
-          table.iloc[i,j] = ''
-          
-    return table
-  
-
-  def view_simple(self):
-
-    inverse_rename = {value: key for key, value in self._rename.items()}
-
-    cols = self._table_characteristics.index.get_level_values(0).unique()
-
-    # remove 'Overall' from cols
-    cols = [c for c in cols if c != 'Overall']
-
-    table = pd.DataFrame(index=cols,
-                         columns=self._table_flows.columns)
-    
-    for i, index_name in enumerate(cols):
-      for j, column_name in enumerate(self._table_flows.columns):
-        # skip if index_name is 'Overall' or 'Missing'
-        if (index_name == 'Overall'): # | (index_name[1] == 'Missing'):
-          table.iloc[i,j] = ''
-          continue
-
-        # use cat_smd for categorical variables
-        if inverse_rename[index_name] in self._categorical:
-          # Get all category rows for this variable (excluding 'Missing')
-          var_display_name = index_name
-          
-          # Find all rows for this categorical variable
-          cat_rows = []
-          for idx in self._table_cat_n.index:
-            if idx[0] == var_display_name and idx[1] != 'Missing':
-              cat_rows.append(idx)
-          
-          if len(cat_rows) == 0:
-            table.iloc[i,j] = 0.0
-            continue
-            
-          # Get proportions for both cohorts for all categories
-          prop1_list = []
-          prop2_list = []
-          n1_total = 0
-          n2_total = 0
-          
-          for cat_row in cat_rows:
-            # Get counts and percentages for this category
-            n1_cat = self._table_cat_n.loc[cat_row, :].iloc[j]
-            perc1_cat = self._table_cat_perc.loc[cat_row, :].iloc[j]
-            n2_cat = self._table_cat_n.loc[cat_row, :].iloc[j+1]
-            perc2_cat = self._table_cat_perc.loc[cat_row, :].iloc[j+1]
-            
-            # Convert percentage to proportion
-            prop1_list.append(perc1_cat / 100.0)
-            prop2_list.append(perc2_cat / 100.0)
-            
-            # Accumulate total counts
-            n1_total += n1_cat
-            n2_total += n2_cat
-          
-          # Calculate overall SMD for this categorical variable
-          if len(prop1_list) == 2:  # Binary variable - use simpler calculation
-            # For binary variables, use the standard SMD formula to avoid singular matrix
-            p1 = prop1_list[0]  # Proportion of first category in cohort 1
-            p2 = prop2_list[0]  # Proportion of first category in cohort 2
-            diff = abs(p1 - p2)
-            pooled_var = (p1*(1-p1) + p2*(1-p2))/2
-            if pooled_var > 0:
-              smd = diff / np.sqrt(pooled_var)
-              if n1_total > 0 and n2_total > 0:
-                # Apply Hedges correction for binary case
-                j_factor = 1 - (3/(4*(n1_total + n2_total - 2) - 1))
-                smd = j_factor * smd
-              # Clean up the result: handle -0.0 and round properly
-              smd = np.round(smd, self._decimals)
-              if smd == -0.0:
-                smd = 0.0
-              table.iloc[i,j] = smd
-            else:
-              table.iloc[i,j] = 0.0
-          elif len(prop1_list) > 2:  # Multi-category variable - use Yang & Dalton method
-            smd = self._cat_smd(
-              prop1=prop1_list,
-              prop2=prop2_list,
-              n1=n1_total,
-              n2=n2_total,
-              unbiased=False
-            )
-            # Handle NaN and -0.0 cases
-            if pd.isna(smd) or np.isnan(smd):
-              smd = 0.0
-            elif smd == -0.0:
-              smd = 0.0
-            table.iloc[i,j] = smd
-          else:  # Single category (shouldn't happen with proper data)
-            table.iloc[i,j] = 0.0
-
-        # use cont_smd for continuous variables
-        elif (inverse_rename[index_name] in self._normal) | (inverse_rename[index_name] in self._nonnormal):
-          mean_0 = self._table_cat_n.loc[(index_name, ' '), :].iloc[j]
-          sd_0 = self._table_cat_perc.loc[(index_name, ' '), :].iloc[j]
-          mean_1 = self._table_cat_n.loc[(index_name, ' '), :].iloc[j+1]
-          sd_1 = self._table_cat_perc.loc[(index_name, ' '), :].iloc[j+1]
-          n_0 = self._table_characteristics.loc[('Overall', ' '), :].iloc[j]
-          n_1 = self._table_characteristics.loc[('Overall', ' '), :].iloc[j+1]
-          smd = self._cont_smd(
-             mean1=mean_0,
-             mean2=mean_1,
-             sd1=sd_0,
-             sd2=sd_1,
-             n1=n_0,
-             n2=n_1,
-             unbiased=False
-          )
-          # Handle -0.0 case
-          if smd == -0.0:
-            smd = 0.0
-          table.iloc[i,j] = smd
-          
-    return table
-
-        
-
-  # adapted from: https://github.com/tompollard/tableone/blob/main/tableone/tableone.py#L659
-  def _cat_smd(self,
-               prop1=None,
-               prop2=None,
-               n1=None,
-               n2=None,
-               unbiased=False):
-      """
-      Compute the standardized mean difference (regular or unbiased) using
-      either raw data or summary measures.
-
-      Parameters
-      ----------
-      prop1 : list
-          Proportions (range 0-1) for each categorical value in dataset 1
-          (control). 
-      prop2 : list
-          Proportions (range 0-1) for each categorical value in dataset 2
-          (treatment).
-      n1 : int
-          Sample size of dataset 1 (control).
-      n2 : int
-          Sample size of dataset 2 (treatment).
-      unbiased : bool
-          Return an unbiased estimate using Hedges' correction. Correction
-          factor approximated using the formula proposed in Hedges 2011.
-          (default = False)
-
-      Returns
-      -------
-      smd : float
-          Estimated standardized mean difference.
-      """
-      # Categorical SMD Yang & Dalton 2012
-      # https://support.sas.com/resources/papers/proceedings12/335-2012.pdf
-      prop1 = np.asarray(prop1)
-      prop2 = np.asarray(prop2)
-
-      lst_cov = []
-      for p in [prop1, prop2]:
-          variance = p * (1 - p)
-          covariance = - np.outer(p, p)  # type: ignore
-          covariance[np.diag_indices_from(covariance)] = variance
-          lst_cov.append(covariance)
-
-      mean_diff = np.asarray(prop2 - prop1).reshape((1, -1))  # type: ignore
-      mean_cov = (lst_cov[0] + lst_cov[1])/2
-
-      try:
-          sq_md = mean_diff @ np.linalg.inv(mean_cov) @ mean_diff.T
-      except np.linalg.LinAlgError:
-          sq_md = 0
-
-      try:
-          smd = np.asarray(np.sqrt(sq_md))[0][0]
-      except IndexError:
-          smd = 0
-
-      # standard error
-      # v_d = ((n1+n2) / (n1*n2)) + ((smd ** 2) / (2*(n1+n2)))  # type: ignore
-      # se = np.sqrt(v_d)
-
-      if unbiased:
-          # Hedges correction (J. Hedges, 1981)
-          # Approximation for the the correction factor from:
-          # Introduction to Meta-Analysis. Michael Borenstein,
-          # L. V. Hedges, J. P. T. Higgins and H. R. Rothstein
-          # Wiley (2011). Chapter 4. Effect Sizes Based on Means.
-          j = 1 - (3/(4*(n1+n2-2)-1))  # type: ignore
-          smd = j * smd
-          # v_g = (j ** 2) * v_d
-          # se = np.sqrt(v_g)
-
-      return np.round(smd, self._decimals)
-  
-    # adapted from: https://github.com/tompollard/tableone/blob/main/tableone/tableone.py#L581
-  def _cont_smd(self,
-                mean1=None, mean2=None,
-                sd1=None, sd2=None,
-                n1=None, n2=None,
-                unbiased=False):
-    """
-    Compute the standardized mean difference (regular or unbiased) using
-    either raw data or summary measures.
-
-    Parameters
-    ----------
-    mean1 : float
-        Mean of dataset 1 (control).
-    mean2 : float
-        Mean of dataset 2 (treatment).
-    sd1 : float
-        Standard deviation of dataset 1 (control).
-    sd2 : float
-        Standard deviation of dataset 2 (treatment).
-    n1 : int
-        Sample size of dataset 1 (control).
-    n2 : int
-        Sample size of dataset 2 (treatment).
-    unbiased : bool
-        Return an unbiased estimate using Hedges' correction. Correction
-        factor approximated using the formula proposed in Hedges 2011.
-        (default = False)
-
-    Returns
-    -------
-    smd : float
-        Estimated standardized mean difference.
-    """
-
-    # cohens_d
-    denominator = np.sqrt((sd1 ** 2 + sd2 ** 2) / 2) 
-    if denominator == 0:
-       return 0
-    else:
-      smd = (mean2 - mean1) / denominator # type: ignore
-
-    # standard error
-    # v_d = ((n1+n2) / (n1*n2)) + ((smd ** 2) / (2*(n1+n2)))  # type: ignore
-    # se = np.sqrt(v_d)
-
-    if unbiased:
-        # Hedges correction (J. Hedges, 1981)
-        # Approximation for the the correction factor from:
-        # Introduction to Meta-Analysis. Michael Borenstein,
-        # L. V. Hedges, J. P. T. Higgins and H. R. Rothstein
-        # Wiley (2011). Chapter 4. Effect Sizes Based on Means.
-        j = 1 - (3/(4*(n1+n2-2)-1))  # type: ignore
-        smd = j * smd
-        # v_g = (j ** 2) * v_d
-        # se = np.sqrt(v_g)
-
-    return np.round(smd, self._decimals)
-  
-class FlowDiagram:
-    def __init__(self,
-                 table_flows: TableFlows,
-                 table_characteristics: TableCharacteristics = None,
-                 table_drifts: TableDrifts = None,
-                 new_cohort_labels: list = None,
-                 exclusion_labels: list = None,
-                 box_width: int = 2.5,
-                 box_height: int = 1,
-                 plot_dists: bool = True,
-                 smds: bool = True,
-                 legend: bool = True,
-                 legend_with_vars: bool = True,
-                 output_folder: str = 'imgs',
-                 output_file: str = 'flow_diagram',
-                 display_flow_diagram: bool = True,
-                 # New color customization parameters
-                 cohort_node_color: str = 'white',
-                 exclusion_node_color: str = 'floralwhite',
-                 categorical_bar_colors: list = None,
-                 missing_value_color: str = 'lightgray',
-                 continuous_var_color: str = 'lavender',
-                 edge_color: str = 'black',
-                 ):
-        
-        if (table_characteristics is None) & (plot_dists):
-            raise ValueError("table_characteristics must be provided if plot_dists is True")
-        
-        if (table_drifts is None) & (smds):
-            raise ValueError("table_drifts must be provided if smds is True")
-        
-        self.table_flows = table_flows.view()
-        self.table_characteristics = table_characteristics
-        self.table_drifts = table_drifts
-    
-
-        if new_cohort_labels is None:
-            new_cohort_labels = [f'Cohort {i},\n ___ subjects' for i in range(len(table_flows.view().columns))]
-
-        if exclusion_labels is None:
-            exclusion_labels = [f'Exclusion {i},\n ___ subjects' for i in range(len(table_flows.view().columns))]
-
-        self.cohort_labels = new_cohort_labels
-        self.exclusion_labels = exclusion_labels
-        self.width = box_width
-        self.height = box_height
-        self.plot_dists = plot_dists
-
-        if self.plot_dists == False:
-          self.smds = False
-          self.legend = False
-          self.legend_with_vars = False
-           
-        self.smds = smds
-        self.legend = legend
-        self.legend_with_vars = legend_with_vars
-        self.output_file = output_file
-        self.output_folder = output_folder
-        
-        # Store color customization properties
-        self.cohort_node_color = cohort_node_color
-        self.exclusion_node_color = exclusion_node_color
-        self.categorical_bar_colors = categorical_bar_colors
-        self.missing_value_color = missing_value_color
-        self.continuous_var_color = continuous_var_color
-        self.edge_color = edge_color
-
-        # Create the imgs folder if it does not exist
-        if not os.path.exists(self.output_folder):
-            os.makedirs(self.output_folder)
-
-        self.output_path = os.path.join(self.output_folder, self.output_file)
-        self.display = display_flow_diagram
-
-    def _plot_dists(self):
-        """Generate distribution plots for each cohort."""
-        import os
-        import matplotlib.pyplot as plt
-        import numpy as np
-        import matplotlib.cm as cm
-        import matplotlib.colors as mcolors
-        
-        # Ensure output directories exist
-        imgs_dir = os.path.join(self.output_folder, 'imgs')
-        os.makedirs(imgs_dir, exist_ok=True)
-
-        # Store the original working directory
-        orig_dir = os.getcwd()
-        
-        # Extract data from table_characteristics
-        categorical = self.table_characteristics._categorical
-        
-        table = self.table_characteristics.view()
-        if self.smds:
-            table_smds = self.table_drifts.view_simple()
-
-        # Get all variables except 'Overall'
-        vars = table.loc[
-            table.index.get_level_values(0) != 'Overall'
-        ].index.get_level_values(0).unique().tolist()
-
-        # Get all cohorts
-        cohorts = table.columns.get_level_values(1).unique().tolist()
-
-        # Create color palettes for variables
-        var_colors = {}
-        for i, var in enumerate(categorical):
-            # Assign a base color from tab10 colormap
-            base_cmap = cm.get_cmap('tab10')
-            base_color = base_cmap(i % 10)
-            var_colors[var] = base_color
-
-        # Define the legend handles and labels
-        legend_handles = []
-        legend_labels = []
-
-        # Iterate through each cohort
-        for c, coh in enumerate(cohorts):
-            fig, axes = plt.subplots(1, 1, figsize=(4, 2), dpi=150)
-            
-            # Iterate through each variable
-            for v, var in enumerate(vars):
-                # Extract original variable name (without formatting)
-                orig_var = var
-                if ', ' in var:
-                    orig_var = var.split(', ')[0]
-                
-                # Get the inverse rename mapping to find original name
-                var_original = None
-                for k, v_name in self.table_characteristics._rename.items():
-                    if v_name == orig_var:
-                        var_original = k
-                        break
-                
-                # If we couldn't find it, use the name as is
-                if var_original is None:
-                    var_original = orig_var
-                
-                # Check if this is a categorical variable
-                if var_original in categorical:
-                    # Get all value names for this variable
-                    values_names = table.loc[
-                        table.index.get_level_values(0) == var
-                    ].index.get_level_values(1).tolist()
-                    
-                    # Remove 'Missing' to handle separately
-                    if 'Missing' in values_names:
-                        values_names.remove('Missing')
-                    
-                    # Plot each value as a horizontal bar segment
-                    cum_width = 0
-                    for val_idx, val in enumerate(values_names):
-                        # Get the value (percentage)
-                        value = table.loc[(var, val), ('Cohort', coh)]
-                        
-                        # Convert string percentage to float if needed
-                        if isinstance(value, str):
-                            if '%' in value:
-                                try:
-                                    value = float(value.replace('%', '').strip())
-                                except:
-                                    value = 0
-                            elif '(' in value:
-                                try:
-                                    # Extract percentage from "N (XX.X)" format
-                                    value = float(value.split('(')[1].split(')')[0])
-                                except:
-                                    value = 0
-                        
-                        # Ensure value is numeric
-                        if not isinstance(value, (int, float)):
-                            try:
-                                value = float(value)
-                            except:
-                                value = 0
-                        
-                        # Use consistent color shades for the same variable
-                        if isinstance(self.categorical_bar_colors, dict) and var_original in self.categorical_bar_colors:
-                            # Use custom color mapping provided for this variable
-                            color_list = self.categorical_bar_colors[var_original]
-                            if val_idx < len(color_list):
-                                color = color_list[val_idx]
-                                bar = axes.barh(v, value, left=cum_width, height=.8, color=color, edgecolor='white')
-                            else:
-                                # Use a default color if index exceeds provided colors
-                                bar = axes.barh(v, value, left=cum_width, height=.8, edgecolor='white')
-                        elif self.categorical_bar_colors and isinstance(self.categorical_bar_colors, list) and val_idx < len(self.categorical_bar_colors):
-                            # Use the flat list of colors (original behavior)
-                            color = self.categorical_bar_colors[val_idx]
-                            bar = axes.barh(v, value, left=cum_width, height=.8, color=color, edgecolor='white')
-                        elif var_original in var_colors:
-                            # Generate a shade of the base color for this variable
-                            base_color = var_colors[var_original]
-                            # Create a lighter shade based on value index (0.3-0.9 range)
-                            lightness = 0.3 + 0.6 * (val_idx / max(1, len(values_names) - 1))
-                            adjusted_color = mcolors.rgb_to_hsv(base_color[:3])
-                            # Keep hue, adjust saturation and value
-                            adjusted_color[1] *= lightness  # Reduce saturation for lighter shades
-                            adjusted_color[2] = min(1.0, adjusted_color[2] * (1.5 - lightness*0.5))  # Adjust value
-                            color = mcolors.hsv_to_rgb(adjusted_color)
-                            bar = axes.barh(v, value, left=cum_width, height=.8, color=color, edgecolor='white')
-                        else:
-                            # Default fallback
-                            bar = axes.barh(v, value, left=cum_width, height=.8, edgecolor='white')
-                        
-                        # Choose text color based on bar darkness
-                        textcolor = 'white' if value > 25 else 'black'
-                        
-                        # Add to legend if this is the first cohort
-                        if coh == 0:
-                            legend_handles.append(bar[0])
-                            if self.legend_with_vars:
-                                legend_labels.append(f"{orig_var}: {val}")
-                            else:
-                                legend_labels.append(val)
-                        
-                        # Add value text if it's large enough
-                        if value > 5:
-                            axes.text(cum_width + value/2, v, '{:.1f}'.format(value),
-                                    ha='center', va='center', color=textcolor, fontsize=8)
-                        
-                        cum_width += value
-                
-                    
-                    # Add missing values at the end if present
-                    if ('Missing' or "NA") in table.loc[table.index.get_level_values(0) == var].index.get_level_values(1):
-                        missing_value = table.loc[(var, 'Missing'), ('Cohort', coh)]
-                        
-                        # Convert to numeric if needed
-                        if isinstance(missing_value, str):
-                            try:
-                                if '%' in missing_value:
-                                    missing_value = float(missing_value.replace('%', '').strip())
-                                elif '(' in missing_value:
-                                    missing_value = float(missing_value.split('(')[1].split(')')[0])
-                                else:
-                                    missing_value = float(missing_value)
-                            except:
-                                missing_value = 0
-                        
-                        # Plot missing value bar if it's non-zero
-                        if missing_value > 0:
-                            bar = axes.barh(v, missing_value, left=cum_width, height=.8, 
-                                        color=self.missing_value_color, hatch='///////', edgecolor='white')
-                            
-                            # Add missing to legend if needed
-                            if (coh == 0) and ('Missing' not in legend_labels):
-                                legend_handles.append(bar[0])
-                                legend_labels.append('Missing')
-                            
-                            # Add text if large enough
-                            if missing_value > 5:
-                                axes.text(cum_width + missing_value/2, v, '{:.1f}'.format(missing_value),
-                                        ha='center', va='center', color='black', fontsize=8)
-                    
-                    # Add SMDs if enabled
-                    if (coh > 0) and (self.smds):
-                        col_name = f"{coh-1} to {coh}"
-                        var_smd = orig_var
-                        if var_smd in table_smds.index:
-                            smd = table_smds.loc[var_smd, col_name]
-                            axes.text(-1, v, f'{smd}', ha='right', va='center', fontsize=8, color='black', fontweight='normal')
-                
-                else:
-                    # Handle continuous variables
-                    val = ' '
-                    value = table.loc[(var, val), ('Cohort', coh)]
-                    axes.barh(v, 100, left=0, height=.8, color=self.continuous_var_color, edgecolor='white')
-                    axes.text(50, v, f"{value}", ha='center', va='center', color='black', fontsize=8)
-                    
-                    # Add SMDs if enabled
-                    if (coh > 0) and (self.smds):
-                        col_name = f"{coh-1} to {coh}"
-                        var_smd = orig_var
-                        if var_smd in table_smds.index:
-                            smd = table_smds.loc[var_smd, col_name]
-                            axes.text(-1, v, f'{smd}', ha='right', va='center', fontsize=8, color='black', fontweight='normal')
-                
-                # Add variable name on the right
-                axes.text(101, v, orig_var, ha='left', va='center', fontsize=8, color='black', fontweight='normal')
-
-            # Add SMD header if needed
-            if self.smds and coh > 0:
-                color_smd = 'black'
-                text_smd = f'SMD ({coh-1}, {coh})'
-                axes.text(-1, len(vars) + .75, text_smd, ha='right', va='center', fontsize=8, color=color_smd, fontweight='bold')
-
-            # Format the plot
-            axes.set_yticks([])
-            axes.set_xticks([])
-            axes.set_xlim([0, 110])  # Set x-axis limit to ensure consistent width
-            for spine in axes.spines.values():
-                spine.set_visible(False)
-
-            # Save the figure with absolute path
-            plt.tight_layout()
-            svg_file = os.path.join(imgs_dir, f'part{c}.svg')
-            plt.savefig(svg_file, dpi=300, bbox_inches='tight')
-            plt.close()
-
-        # Create legend if needed
-        if self.legend and len(legend_handles) > 0:
-            # Move 'Missing' to the end of the legend if present
-            if 'Missing' in legend_labels:
-                missing_idx = legend_labels.index('Missing')
-                legend_labels.append(legend_labels.pop(missing_idx))
-                legend_handles.append(legend_handles.pop(missing_idx))
-
-            # Create a separate figure for the legend
-            legend_fig, legend_ax = plt.subplots(figsize=(len(legend_labels)/4, 1))
-            legend_ax.axis('off')
-            legend_ax.legend(legend_handles, legend_labels, loc='center', ncol=1,
-                            fontsize=8, frameon=False)
-
-            # Save the legend with absolute path
-            legend_svg = os.path.join(imgs_dir, 'legend.svg')
-            legend_fig.savefig(legend_svg, dpi=300, bbox_inches='tight')
-            plt.close(legend_fig)
-
-    def view(self):
-        """Create and display a flow diagram of the cohort exclusion process."""
-        import os
-        import graphviz
-        
-        # Generate all auxiliary plots
-        if self.plot_dists:
-            self._plot_dists()
-        
-        # Ensure output folders exist
-        os.makedirs(self.output_folder, exist_ok=True)
-        imgs_dir = os.path.join(self.output_folder, 'imgs')
-        os.makedirs(imgs_dir, exist_ok=True)
-        
-        # Create Graphviz diagram
-        dot = graphviz.Digraph(
-            comment='Cohort Exclusion Process',
-            format='svg',
-            graph_attr={'fontname': 'Helvetica', 'splines': 'ortho'},
-            node_attr={'shape': 'box', 'style': 'filled', 'fixedsize': 'true',
-                    'width': str(self.width), 'height': str(self.height), 'fontname': 'Helvetica'},  
-            edge_attr={'dir': 'forward', 'arrowhead': 'vee', 'arrowsize': '0.5', 'minlen': '1'},
-        )
-
-        columns = self.table_flows.columns.tolist()
-        num_columns = len(columns)
-
-        # Add main cohort nodes with initial counts
-        initial_counts = self.table_flows.loc['Initial, n']
-        for i, (count, column) in enumerate(zip(initial_counts, columns)):
-            node_label = self.cohort_labels[i].replace('___', f'{count}')
-            dot.node(f'A{i}', node_label, shape='box', style='filled', fillcolor=self.cohort_node_color, fontname='Helvetica')
-
-        # Add final cohort node
-        final_node_label = self.cohort_labels[-1]
-        final_node_label = final_node_label.replace('___', f"{self.table_flows.loc['Result, n'].iloc[-1]}")
-        dot.node(f'A{num_columns}', final_node_label, shape='box', style='filled', fillcolor=self.cohort_node_color, fontname='Helvetica')
-
-        if self.plot_dists:
-            # Add final distribution plot node with absolute path
-            img_path = os.path.abspath(os.path.join(imgs_dir, f'part{num_columns}.svg'))
-            dot.node(f'plot_dist{num_columns}', label='',  image=img_path,
-                    imagepos='bc',  imagescale='true',
-                    shape='box', color='transparent',
-                    width=str(self.width+1.25),
-                    height=str(self.height+0.7))
-
-            with dot.subgraph() as s:
-                s.attr(rank='same')
-                s.node(f'A{num_columns}')
-                s.node(f'plot_dist{num_columns}')
-
-        # Add exclusion criteria nodes with removed counts
-        removed_counts = self.table_flows.loc['Removed, n']
-        for i, (count, column) in enumerate(zip(removed_counts, columns)):
-            node_label = self.exclusion_labels[i].replace('___', f'{count}')
-            dot.node(f'E{i}', node_label, shape='box', style='filled', fillcolor=self.exclusion_node_color)
-
-        # Add invisible nodes for positioning
-        for i in range(num_columns + 1):
-            dot.node(f'IA{i}', '', shape='point', height='0')
-
-        # Connect the main cohort nodes with custom edge color
-        for i in range(num_columns):
-            dot.edge(f'A{i}', f'IA{i}', arrowhead='none', color=self.edge_color)
-            dot.edge(f'IA{i}', f'A{i+1}', color=self.edge_color)
-
-        # Connect the exclusion nodes to the hidden nodes with custom edge color
-        for i in range(num_columns):
-            dot.edge(f'IA{i}', f'E{i}', constraint='false', color=self.edge_color)
-        
-        # Adjust ranks to position nodes horizontally for exclusions
-        for i in range(num_columns):
-            with dot.subgraph() as s:
-                s.attr(rank='same')
-                s.node(f'IA{i}')
-                s.node(f'E{i}')
-
-        if self.plot_dists:
-            # Add boxes for the distributions with absolute paths
-            for i in range(num_columns):
-                img_path = os.path.abspath(os.path.join(imgs_dir, f'part{i}.svg'))
-                dot.node(f'plot_dist{i}', label='', image=img_path,
-                    imagepos='bc', imagescale='true',
-                    shape='box', color='transparent',
-                    width=str(self.width+ 1.25),
-                    height=str(self.height+ 0.7))
-                dot.edge(f'A{i}', f'plot_dist{i}', constraint='false', style='invis')
-                with dot.subgraph() as s:
-                    s.attr(rank='same')
-                    s.node(f'A{i}')
-                    s.node(f'plot_dist{i}')
-
-        if self.legend:
-            # Add a final node for the legend with absolute path
-            legend_path = os.path.abspath(os.path.join(imgs_dir, 'legend.svg'))
-            dot.node('legend', label='', image=legend_path, imagescale='true',
-                    shape='box', color='transparent',
-                    imagepos='bl',
-                    width=str(self.width + 1),
-                    height=str(self.height+ 1.2))
-
-            # Create an invisible spacer node to push the legend further right
-            dot.node('legend_spacer', label='', shape='point', style='invis', 
-                    width='0', height='0')
-            
-            # Position legend much further to the right using invisible edges and spacers
-            last_cohort_idx = len(self.table_flows.columns) - 1
-            dot.edge(f'A{last_cohort_idx}', 'legend_spacer', style='invis', minlen='3')
-            dot.edge('legend_spacer', 'legend', style='invis', minlen='2')
-            
-            # Use separate rank for legend to avoid interference
-            with dot.subgraph() as s:
-                s.attr(rank='max')  # Place at the rightmost position
-                s.node('legend')
-        
-        # Save and render the graph
-        output_path = os.path.join(self.output_folder, self.output_file)
-        dot.render(output_path, view=self.display, format='pdf')
-        
-
-
-class EasyFlow:
-    """
-    A simplified interface for creating equity-focused cohort flow diagrams,
-    building on top of the EquiFlow package with a more user-friendly API.
-    """
-    
-    def __init__(
-        self, 
-        data: pd.DataFrame, 
-        title: str = "Cohort Selection",
-        auto_detect: bool = True
-    ):
-        """
-        Initialize EasyFlow with a DataFrame and optional title.
-        
-        Parameters:
-        -----------
-        data : pd.DataFrame
-            The initial cohort dataframe
-        title : str, optional
-            Title for the flow diagram
-        auto_detect : bool, optional
-            Whether to automatically detect variable types
-        """
-        self.data = data
-        self.title = title
-        self.auto_detect = auto_detect
-        
-        # Initialize empty lists for variable types
-        self._categorical_vars = []
-        self._normal_vars = []
-        self._nonnormal_vars = []
-        
-        # Track exclusion steps
-        self._exclusion_steps = []
-        self._current_data = data
-        
-        # Store outputs
-        self.flow_table = None
-        self.characteristics = None
-        self.drifts = None
-        self.diagram = None
-        
-        # Stored EquiFlow instance
-        self._equiflow = None
-        
-        # Auto-detect variable types if enabled
-        if auto_detect:
-            self._detect_variable_types()
-    
-    def _detect_variable_types(self):
-        """
-        Automatically detect variable types in the dataframe.
-        - Categorical: object, bool, or low cardinality numeric
-        - Normal: numeric variables that pass Shapiro-Wilk test
-        - Non-normal: numeric variables that fail Shapiro-Wilk test
-        """
-        # First try the basic categorization without scipy
-        for col in self.data.columns:
-            # Skip columns with too many missing values
-            if self.data[col].isna().mean() > 0.5:
-                continue
-                
-            # Check if column is categorical
-            if self.data[col].dtype == 'object' or self.data[col].dtype == 'bool':
-                self._categorical_vars.append(col)
-                continue
-                
-            # Check for low cardinality numeric (likely categorical)
-            if self.data[col].dtype.kind in 'ifu' and len(self.data[col].unique()) <= 10:
-                self._categorical_vars.append(col)
-                continue
-                
-            # For numeric columns, add to non-normal by default
-            if self.data[col].dtype.kind in 'ifu':
-                self._nonnormal_vars.append(col)
-        
-        # Now try to improve categorization with scipy if available
-        try:
-            from scipy import stats
-            
-            # Clear the normal list to rebuild it
-            self._normal_vars = []
-            
-            # Keep track of columns to remove from non-normal list
-            to_remove = []
-            
-            for col in self._nonnormal_vars:
-                # Get non-null values
-                values = self.data[col].dropna()
-                
-                # Sample if necessary to speed up test
-                if len(values) > 5000:
-                    values = values.sample(5000, random_state=42)
-                
-                # Skip if too few values
-                if len(values) < 8:
-                    continue
-                    
-                # Test for normality
-                try:
-                    _, p_value = stats.shapiro(values)
-                    if p_value > 0.05:  # Normal distribution
-                        self._normal_vars.append(col)
-                        to_remove.append(col)
-                except:
-                    # If test fails, keep as non-normal
-                    pass
-            
-            # Remove columns from non-normal that are now in normal
-            self._nonnormal_vars = [col for col in self._nonnormal_vars if col not in to_remove]
-            
-        except ImportError:
-            print("Note: scipy not found - using simplified variable type detection.")
-            print("Install scipy for better detection of normal vs non-normal variables.")
-            print("  pip install scipy")
-        
-        # Print helpful message
-        print(f"Auto-detected {len(self._categorical_vars)} categorical, {len(self._normal_vars)} normal, and {len(self._nonnormal_vars)} non-normal variables.")
-        print("You can customize these with .categorize(), .measure_normal(), and .measure_nonnormal() methods.")
-    
-    def categorize(self, variables: List[str]):
-        """
-        Define categorical variables to include in the analysis.
-        
-        Parameters:
-        -----------
-        variables : List[str]
-            List of column names to treat as categorical
-            
-        Returns:
-        --------
-        self : EasyFlow
-            For method chaining
-        """
-        self._categorical_vars = variables
-        return self
-    
-    def measure_normal(self, variables: List[str]):
-        """
-        Define normally distributed variables to include in the analysis.
-        
-        Parameters:
-        -----------
-        variables : List[str]
-            List of column names of normally distributed variables
-            
-        Returns:
-        --------
-        self : EasyFlow
-            For method chaining
-        """
-        self._normal_vars = variables
-        return self
-    
-    def measure_nonnormal(self, variables: List[str]):
-        """
-        Define non-normally distributed variables to include in the analysis.
-        
-        Parameters:
-        -----------
-        variables : List[str]
-            List of column names of non-normally distributed variables
-            
-        Returns:
-        --------
-        self : EasyFlow
-            For method chaining
-        """
-        self._nonnormal_vars = variables
-        return self
-    
-    def _generate_exclusion_label(self, mask):
-        """
-        Generate a user-friendly label from a pandas mask condition.
-        """
-        # Try to extract code from the mask if possible
-        try:
-            mask_str = inspect.getsource(mask.func if hasattr(mask, 'func') else mask)
-            # Clean up the code to make a readable label
-            mask_str = mask_str.strip()
-            
-            # Extract condition from common patterns
-            condition_pattern = r'data\["([^"]+)"\]\s*([<>=!]+)\s*([^\s]+)'
-            match = re.search(condition_pattern, mask_str)
-            
-            if match:
-                column, operator, value = match.groups()
-                return f"{column} {operator} {value}"
-            
-            return "Exclusion criteria"
-        except:
-            return "Exclusion criteria"
-    
-    def exclude(self, condition, label: Optional[str] = None):
-        """
-        Add an exclusion step based on a boolean condition.
-        
-        Parameters:
-        -----------
-        condition : pandas.Series or callable
-            Boolean mask to select the subset of data to keep, or a function
-            that takes a dataframe and returns a boolean mask
-        label : str, optional
-            Label describing the exclusion. If not provided, tries to generate one.
-            
-        Returns:
-        --------
-        self : EasyFlow
-            For method chaining
-        """
-        # Generate label if not provided
-        if label is None:
-            label = self._generate_exclusion_label(condition)
-        
-        # Apply the mask directly if it's already a boolean mask
-        if isinstance(condition, pd.Series) and condition.dtype == bool:
-            # We need to make sure the indices match
-            # First, create a mask with the same index as the current data
-            aligned_mask = pd.Series(False, index=self._current_data.index)
-            
-            # Then, update the mask with the condition where indices match
-            common_indices = self._current_data.index.intersection(condition.index)
-            aligned_mask.loc[common_indices] = condition.loc[common_indices]
-            
-            # Apply the mask
-            new_data = self._current_data[aligned_mask]
-        
-        # If it's a callable, apply it to the current data
-        elif callable(condition):
-            mask = condition(self._current_data)
-            new_data = self._current_data[mask]
-        
-        # If it's neither, try direct boolean indexing
-        else:
-            try:
-                new_data = self._current_data[condition]
-            except Exception as e:
-                raise ValueError(f"Invalid exclusion condition: {e}")
-        
-        # Store the step information and a copy of the condition
-        self._exclusion_steps.append({
-            'previous_data': self._current_data.copy(),
-            'condition': condition,
-            'new_data': new_data.copy(),
-            'label': label
-        })
-        
-        # Update current data
-        self._current_data = new_data
-        
-        return self
-    
-    def _create_equiflow(self):
-        """
-        Create and configure the underlying EquiFlow instance.
-        """
-        # Create initial EquiFlow instance with the original data
-        ef = EquiFlow(
-            data=self.data,
-            initial_cohort_label=self.title,
-            categorical=self._categorical_vars,
-            normal=self._normal_vars,
-            nonnormal=self._nonnormal_vars
-        )
-        
-        # Start with the complete original dataset
-        current_df = self.data.copy()
-        
-        # Add each exclusion step
-        for i, step in enumerate(self._exclusion_steps):
-            # Apply condition to get the new subset
-            if isinstance(step['condition'], pd.Series) and step['condition'].dtype == bool:
-                # Create a boolean mask that's the same size as the current data
-                indices_to_keep = current_df.index.intersection(step['new_data'].index)
-                mask = current_df.index.isin(indices_to_keep)
-            elif callable(step['condition']):
-                # Apply the callable to the current data
-                mask = step['condition'](current_df)
-            else:
-                # Try direct application
-                try:
-                    mask = step['condition']
-                except:
-                    # Fallback - just use indices
-                    indices_to_keep = current_df.index.intersection(step['new_data'].index)
-                    mask = current_df.index.isin(indices_to_keep)
-                
-            # Add the exclusion to EquiFlow
-            ef.add_exclusion(
-                mask=mask,
-                exclusion_reason=step['label'],
-                new_cohort_label=f"Step {i+1}"
-            )
-            
-            # Update the current dataframe for the next iteration
-            current_df = current_df[mask]
-        
-        self._equiflow = ef
-        return ef
-    
-    def generate(self, output: str = "flow_diagram", show: bool = True, format: str = "pdf"):
-        """
-        Generate the flow diagram and tables.
-        
-        Parameters:
-        -----------
-        output : str, optional
-            Base name for output files
-        show : bool, optional
-            Whether to display the flow diagram
-        format : str, optional
-            Output format for the diagram (pdf, svg, png)
-            
-        Returns:
-        --------
-        self : EasyFlow
-            For method chaining
-        """
-        # Create EquiFlow instance if not already created
-        if self._equiflow is None:
-            ef = self._create_equiflow()
-        else:
-            ef = self._equiflow
-        
-        # Get tables
-        self.flow_table = ef.view_table_flows()
-        self.characteristics = ef.view_table_characteristics()
-        self.drifts = ef.view_table_drifts()
-        
-        # Generate and save the diagram
-        ef.plot_flows(
-            output_file=output,
-            display_flow_diagram=show
-        )
-        
-        # Store the diagram path for reference
-        self.diagram = os.path.join("imgs", f"{output}.{format}")
-        
-        return self
-    
-    @classmethod
-    def quick_flow(cls, 
-                  data: pd.DataFrame, 
-                  exclusions: List[Tuple[Union[pd.Series, Callable], str]], 
-                  output: str = "flow_diagram",
-                  auto_detect: bool = True):
-        """
-        Quickly create a flow diagram with a list of exclusion steps.
-        
-        Parameters:
-        -----------
-        data : pd.DataFrame
-            Initial cohort data
-        exclusions : List[Tuple[Union[pd.Series, Callable], str]]
-            List of (condition, label) pairs defining exclusions
-            The condition can be a boolean mask or a function that takes a dataframe and returns a mask
-        output : str, optional
-            Base name for output files
-        auto_detect : bool, optional
-            Whether to auto-detect variable types
-            
-        Returns:
-        --------
-        flow : EasyFlow
-            The configured EasyFlow instance
-        """
-        # Create EasyFlow instance
-        flow = cls(data, auto_detect=auto_detect)
-        
-        # Add all exclusion steps
-        for condition, label in exclusions:
-            flow.exclude(condition, label)
-        
-        # Generate the diagram
-        flow.generate(output=output)
-        
-        return flow
-
-
-class TablePValues:
-    def __init__(
-        self,
-        dfs: list,
-        categorical: Optional[list] = None,
-        normal: Optional[list] = None,
-        nonnormal: Optional[list] = None,
-        order_vars: Optional[list] = None,
-        limit: Optional[Union[int, dict]] = None,  # New parameter
-        order_classes: Optional[dict] = None,  # New parameter
+        categorical: Optional[List[str]] = None,
+        normal: Optional[List[str]] = None,
+        nonnormal: Optional[List[str]] = None,
+        order_vars: Optional[List[str]] = None,
+        order_classes: Optional[Dict[str, List[str]]] = None,
+        limit: Optional[Union[int, Dict[str, int]]] = None,
         alpha: float = 0.05,
         decimals: int = 3,
         min_n_expected: int = 5,
         min_samples: int = 30,
-        rename: Optional[dict] = None
+        rename: Optional[Dict[str, str]] = None,
+        correction: str = "none",
+    ) -> pd.DataFrame:
+        """
+        Generate a table of p-values between consecutive cohorts.
+        
+        Parameters
+        ----------
+        categorical : list, optional
+            List of categorical variable names.
+        normal : list, optional
+            List of normally-distributed variable names.
+        nonnormal : list, optional
+            List of non-normally distributed variable names.
+        order_vars : list, optional
+            List specifying the display order of variables.
+        order_classes : dict, optional
+            Dictionary mapping variable names to category order lists.
+        limit : int or dict, optional
+            Maximum categories to display per variable.
+        alpha : float, default=0.05
+            Significance level for hypothesis testing.
+        decimals : int, default=3
+            Number of decimal places for p-values.
+        min_n_expected : int, default=5
+            Minimum expected count for chi-square test validity.
+        min_samples : int, default=30
+            Minimum sample size for parametric tests.
+        rename : dict, optional
+            Variable name mappings.
+        correction : str, default="none"
+            Multiple testing correction method applied globally across all
+            non-missingness tests. Options:
+            - "none": No correction (default)
+            - "bonferroni": Bonferroni correction (controls FWER)
+            - "fdr_bh" or "bh": Benjamini-Hochberg procedure (controls FDR)
+            
+        Returns
+        -------
+        pd.DataFrame
+            Table of p-values with significance indicators.
+        """
+        if len(self._dfs) < 2:
+            raise ValueError("At least two cohorts must be provided.")
+        
+        categorical = categorical if categorical is not None else self.categorical
+        normal = normal if normal is not None else self.normal
+        nonnormal = nonnormal if nonnormal is not None else self.nonnormal
+        order_vars = order_vars if order_vars is not None else self.order_vars
+        order_classes = order_classes if order_classes is not None else self.order_classes
+        limit = limit if limit is not None else self.limit
+        rename = rename if rename is not None else self.rename
+        
+        self.table_pvalues = TablePValues(
+            dfs=self._dfs,
+            categorical=categorical,
+            normal=normal,
+            nonnormal=nonnormal,
+            order_vars=order_vars,
+            order_classes=order_classes,
+            limit=limit,
+            alpha=alpha,
+            decimals=decimals,
+            min_n_expected=min_n_expected,
+            min_samples=min_samples,
+            rename=rename,
+            correction=correction,
+        )
+        return self.table_pvalues.view()
+
+    def plot_flows(
+        self,
+        new_cohort_labels: Optional[List[str]] = None,
+        exclusion_labels: Optional[List[str]] = None,
+        box_width: float = 2.5,
+        box_height: float = 1.0,
+        plot_dists: bool = True,
+        smds: bool = True,
+        smd_decimals: Optional[int] = None,
+        pvalues: bool = False,
+        pvalue_decimals: int = 3,
+        legend: bool = True,
+        legend_with_vars: bool = True,
+        output_folder: str = "imgs",
+        output_file: str = "flow_diagram",
+        display_flow_diagram: bool = True,
+        cohort_node_color: str = "white",
+        exclusion_node_color: str = "floralwhite",
+        categorical_bar_colors: Optional[Union[List[str], Dict[str, List[str]]]] = None,
+        missing_value_color: str = "lightgray",
+        continuous_var_color: str = "lavender",
+        edge_color: str = "black",
+        pvalue_correction: str = "none",
     ) -> None:
         """
-        Calculate p-values between cohorts using appropriate statistical tests.
+        Create and display a flow diagram of the cohort exclusion process.
+        
+        Parameters
+        ----------
+        new_cohort_labels : list of str, optional
+            Labels for each cohort node. Use "___" as placeholder for counts.
+        exclusion_labels : list of str, optional
+            Labels for each exclusion node. Use "___" as placeholder for counts.
+        box_width : float, default=2.5
+            Width of cohort boxes in the diagram.
+        box_height : float, default=1.0
+            Height of cohort boxes in the diagram.
+        plot_dists : bool, default=True
+            Whether to include distribution plots.
+        smds : bool, default=True
+            Whether to display SMD values in the distribution plots.
+        smd_decimals : int, optional
+            Number of decimal places for SMD values in plots.
+        pvalues : bool, default=False
+            Whether to display p-values in the flow diagram.
+        pvalue_decimals : int, default=3
+            Number of decimal places for p-values in the plot.
+        legend : bool, default=True
+            Whether to include a legend.
+        legend_with_vars : bool, default=True
+            Whether to include variable names in legend entries.
+        output_folder : str, default="imgs"
+            Folder for output files.
+        output_file : str, default="flow_diagram"
+            Base name for output files.
+        display_flow_diagram : bool, default=True
+            Whether to display the diagram after creation.
+        cohort_node_color : str, default="white"
+            Fill color for cohort nodes.
+        exclusion_node_color : str, default="floralwhite"
+            Fill color for exclusion nodes.
+        categorical_bar_colors : list or dict, optional
+            Colors for categorical variable bars.
+        missing_value_color : str, default="lightgray"
+            Color for missing value bars.
+        continuous_var_color : str, default="lavender"
+            Color for continuous variable bars.
+        edge_color : str, default="black"
+            Color for diagram edges.
+        pvalue_correction : str, default="none"
+            Multiple testing correction method for p-values.
         """
-        from scipy import stats
+        if len(self._dfs) < 2:
+            raise ValueError("At least two cohorts must be provided.")
         
-        if not isinstance(dfs, list) or len(dfs) < 2:
-            raise ValueError("dfs must be a list with length ≥ 2")
+        if new_cohort_labels is None:
+            new_cohort_labels = [
+                "___ patients\n" + label for label in self.new_cohort_labels.values()
+            ]
+        if exclusion_labels is None:
+            exclusion_labels = [
+                "___ patients excluded for\n" + label
+                for label in self.exclusion_labels.values()
+            ]
         
-        if (categorical is None) and (normal is None) and (nonnormal is None):
-            raise ValueError("At least one of categorical, normal, or nonnormal must be provided")
+        smd_decimals = smd_decimals if smd_decimals is not None else self.smd_decimals
         
-        if (order_vars is not None) & (not isinstance(order_vars, list)):
-            raise ValueError("order_vars must be a list")
+        # Create internal tables for plotting
+        plot_table_flows = TableFlows(
+            dfs=self._dfs,
+            label_suffix=True,
+            thousands_sep=True
+        )
+        plot_table_characteristics = TableCharacteristics(
+            dfs=self._dfs,
+            categorical=self.categorical,
+            normal=self.normal,
+            nonnormal=self.nonnormal,
+            order_classes=self.order_classes,
+            limit=self.limit,
+            decimals=self.decimals,
+            format_cat="%",
+            format_normal=self.format_normal,
+            format_nonnormal=self.format_nonnormal,
+            thousands_sep=False,
+            missingness=True,
+            label_suffix=True,
+            rename=self.rename,
+        )
+        plot_table_drifts = TableDrifts(
+            dfs=self._dfs,
+            categorical=self.categorical,
+            normal=self.normal,
+            nonnormal=self.nonnormal,
+            order_classes=self.order_classes,
+            limit=self.limit,
+            decimals=smd_decimals,
+            missingness=self.missingness,
+            rename=self.rename,
+        )
         
-        if (limit is not None) & (not (isinstance(limit, int) or isinstance(limit, dict))):
-            raise ValueError("limit must be an integer or a dictionary")
+        plot_table_pvalues = None
+        if pvalues:
+            plot_table_pvalues = TablePValues(
+                dfs=self._dfs,
+                categorical=self.categorical,
+                normal=self.normal,
+                nonnormal=self.nonnormal,
+                order_classes=self.order_classes,
+                limit=self.limit,
+                decimals=pvalue_decimals,
+                rename=self.rename,
+                correction=pvalue_correction,
+            )
+        
+        self.flow_diagram = FlowDiagram(
+            table_flows=plot_table_flows,
+            table_characteristics=plot_table_characteristics,
+            table_drifts=plot_table_drifts,
+            table_pvalues=plot_table_pvalues,
+            new_cohort_labels=new_cohort_labels,
+            exclusion_labels=exclusion_labels,
+            box_width=box_width,
+            box_height=box_height,
+            plot_dists=plot_dists,
+            smds=smds,
+            smd_decimals=smd_decimals,
+            pvalues=pvalues,
+            pvalue_decimals=pvalue_decimals,
+            legend=legend,
+            legend_with_vars=legend_with_vars,
+            output_folder=output_folder,
+            output_file=output_file,
+            display_flow_diagram=display_flow_diagram,
+            cohort_node_color=cohort_node_color,
+            exclusion_node_color=exclusion_node_color,
+            categorical_bar_colors=categorical_bar_colors,
+            missing_value_color=missing_value_color,
+            continuous_var_color=continuous_var_color,
+            edge_color=edge_color,
+        )
+        self.flow_diagram.view()
+
+
+# TableFlows Class
+
+class TableFlows:
+    """
+    Generate tables showing cohort flow (sizes at each step).
+    
+    Parameters
+    ----------
+    dfs : list of pd.DataFrame
+        List of DataFrames representing sequential cohorts.
+    label_suffix : bool, default=True
+        Whether to add ", n" suffix to labels.
+    thousands_sep : bool, default=True
+        Whether to use thousands separators in counts.
+    """
+    
+    def __init__(
+        self,
+        dfs: List[pd.DataFrame],
+        label_suffix: bool = True,
+        thousands_sep: bool = True
+    ):
+        if not dfs:
+            raise ValueError("dfs list cannot be empty")
+        self._dfs = dfs
+        self._label_suffix = label_suffix
+        self._thousands_sep = thousands_sep
+
+    def __repr__(self) -> str:
+        return f"TableFlows(cohorts={len(self._dfs)})"
+
+    def view(self) -> pd.DataFrame:
+        """
+        Generate the cohort flow table.
+        
+        Returns
+        -------
+        pd.DataFrame
+            Pivot table showing Initial, Removed, and Result counts
+            for each cohort transition.
+        """
+        rows = []
+        suffix = ", n" if self._label_suffix else ""
+        
+        for i in range(len(self._dfs) - 1):
+            df_0, df_1 = self._dfs[i], self._dfs[i + 1]
+            label = f"{i} to {i + 1}"
             
-        if (order_classes is not None) & (not isinstance(order_classes, dict)):
-            raise ValueError("order_classes must be a dictionary")
+            n_initial = len(df_0)
+            n_removed = len(df_0) - len(df_1)
+            n_result = len(df_1)
+            
+            if self._thousands_sep:
+                n0, n1, n2 = f"{n_initial:,}", f"{n_removed:,}", f"{n_result:,}"
+            else:
+                n0, n1, n2 = n_initial, n_removed, n_result
+            
+            rows.append({"Cohort Flow": label, "": "Initial" + suffix, "N": n0})
+            rows.append({"Cohort Flow": label, "": "Removed" + suffix, "N": n1})
+            rows.append({"Cohort Flow": label, "": "Result" + suffix, "N": n2})
+        
+        return pd.DataFrame(rows).pivot(index="", columns="Cohort Flow", values="N")
+
+
+# TableCharacteristics Class
+
+class TableCharacteristics:
+    """
+    Generate tables of cohort characteristics (distributions).
+    
+    Parameters
+    ----------
+    dfs : list of pd.DataFrame
+        List of DataFrames representing sequential cohorts.
+    categorical : list, optional
+        List of categorical variable names.
+    normal : list, optional
+        List of normally-distributed variable names.
+    nonnormal : list, optional
+        List of non-normally distributed variable names.
+    order_vars : list, optional
+        List specifying the display order of variables.
+    order_classes : dict, optional
+        Dictionary mapping variable names to category order lists.
+    limit : int or dict, optional
+        Maximum categories to display per variable.
+    decimals : int, default=2
+        Number of decimal places.
+    format_cat : str, default="N (%)"
+        Format for categorical variables.
+    format_normal : str, default="Mean ± SD"
+        Format for normal variables.
+    format_nonnormal : str, default="Median [IQR]"
+        Format for non-normal variables.
+    thousands_sep : bool, default=True
+        Whether to use thousands separators.
+    missingness : bool, default=True
+        Whether to show missingness statistics.
+    label_suffix : bool, default=True
+        Whether to add format suffixes to labels.
+    rename : dict, optional
+        Variable name mappings.
+    """
+    
+    def __init__(
+        self,
+        dfs: List[pd.DataFrame],
+        categorical: Optional[List[str]] = None,
+        normal: Optional[List[str]] = None,
+        nonnormal: Optional[List[str]] = None,
+        order_vars: Optional[List[str]] = None,
+        order_classes: Optional[Dict[str, List[str]]] = None,
+        limit: Optional[Union[int, Dict[str, int]]] = None,
+        decimals: int = 2,
+        format_cat: str = "N (%)",
+        format_normal: str = "Mean ± SD",
+        format_nonnormal: str = "Median [IQR]",
+        thousands_sep: bool = True,
+        missingness: bool = True,
+        label_suffix: bool = True,
+        rename: Optional[Dict[str, str]] = None,
+    ):
+        if not dfs:
+            raise ValueError("dfs list cannot be empty")
         
         self._dfs = dfs
-        self._categorical = [] if categorical is None else categorical
-        self._normal = [] if normal is None else normal
-        self._nonnormal = [] if nonnormal is None else nonnormal
-        self._order_vars = order_vars  # Store order_vars
-        self._limit = limit  
-        self._order_classes = order_classes  
+        self._categorical = categorical or []
+        self._normal = normal or []
+        self._nonnormal = nonnormal or []
+        self._order_vars = order_vars
+        self._order_classes = order_classes or {}
+        self._limit = limit
+        self._decimals = decimals
+        self._missingness = missingness
+        self._format_cat = format_cat
+        self._format_normal = format_normal
+        self._format_nonnormal = format_nonnormal
+        self._thousands_sep = thousands_sep
+        self._label_suffix = label_suffix
+        self._rename = rename or {}
+        
+        # Validate variables exist
+        if dfs:
+            validate_variables(
+                dfs[0],
+                self._categorical,
+                self._normal,
+                self._nonnormal,
+                "TableCharacteristics"
+            )
+
+    def __repr__(self) -> str:
+        n_vars = len(self._categorical) + len(self._normal) + len(self._nonnormal)
+        return f"TableCharacteristics(cohorts={len(self._dfs)}, variables={n_vars})"
+
+    def _get_limit_for_var(self, var: str) -> Optional[int]:
+        """Get the category limit for a specific variable."""
+        if self._limit is None:
+            return None
+        if isinstance(self._limit, int):
+            return self._limit
+        return self._limit.get(var)
+
+    def _get_ordered_categories(self, col: str) -> List[Any]:
+        """
+        Get ordered unique values for a categorical variable.
+        
+        Applies order_classes if specified, then limit if specified.
+        """
+        # Get all unique values from the initial cohort
+        all_values = self._dfs[0][col].dropna().unique().tolist()
+        
+        # Apply custom ordering if specified
+        if col in self._order_classes:
+            ordered = self._order_classes[col]
+            # Start with specified order, then add any remaining values
+            result = [v for v in ordered if v in all_values]
+            result.extend([v for v in all_values if v not in ordered])
+        else:
+            # Default: sort by frequency in initial cohort (descending)
+            value_counts = self._dfs[0][col].value_counts()
+            result = [v for v in value_counts.index if v in all_values]
+        
+        # Apply limit if specified
+        limit = self._get_limit_for_var(col)
+        if limit is not None and len(result) > limit:
+            result = result[:limit]
+        
+        return result
+
+    def _my_value_counts(
+        self,
+        df: pd.DataFrame,
+        col: str,
+        categories: List[Any]
+    ) -> pd.DataFrame:
+        """
+        Calculate value counts for a categorical variable.
+        
+        Parameters
+        ----------
+        df : pd.DataFrame
+            The DataFrame to analyze.
+        col : str
+            Column name.
+        categories : list
+            List of categories to include (in order).
+            
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with counts/percentages for each category.
+        """
+        counts = pd.DataFrame(columns=[col], index=categories)
+        n = len(df)
+        
+        if n == 0:
+            for cat in categories:
+                if self._format_cat == "%":
+                    counts.loc[cat, col] = 0.0
+                elif self._format_cat == "N":
+                    counts.loc[cat, col] = "0" if self._thousands_sep else 0
+                else:
+                    counts.loc[cat, col] = "0 (0.0)" if self._thousands_sep else "0 (0.0)"
+            return counts
+        
+        # Denominator: total n if showing missingness, else non-missing count
+        denom = n if self._missingness else max(n - df[col].isna().sum(), 1)
+        
+        for cat in categories:
+            count = (df[col] == cat).sum()
+            
+            if self._format_cat == "%":
+                counts.loc[cat, col] = round(count / denom * 100, self._decimals)
+            elif self._format_cat == "N":
+                counts.loc[cat, col] = f"{count:,}" if self._thousands_sep else count
+            else:
+                perc = round(count / denom * 100, self._decimals)
+                counts.loc[cat, col] = (
+                    f"{count:,} ({perc})" if self._thousands_sep else f"{count} ({perc})"
+                )
+        
+        return counts
+
+    def view(self) -> pd.DataFrame:
+        """
+        Generate the characteristics table.
+        
+        Returns
+        -------
+        pd.DataFrame
+            Multi-level table with characteristics for each cohort.
+        """
+        table = pd.DataFrame()
+        
+        # Pre-compute ordered categories for each categorical variable
+        var_categories = {
+            col: self._get_ordered_categories(col) for col in self._categorical
+        }
+        
+        for i, df in enumerate(self._dfs):
+            # Initialize DataFrame with MultiIndex
+            index = pd.MultiIndex(
+                levels=[[], []],
+                codes=[[], []],
+                names=["variable", "index"],
+            )
+            df_dists = pd.DataFrame(columns=["value"], index=index)
+            
+            # Determine processing order
+            all_vars = set(self._categorical + self._normal + self._nonnormal)
+            if self._order_vars:
+                processing_order = [v for v in self._order_vars if v in all_vars]
+                processing_order.extend([
+                    v for v in self._categorical + self._normal + self._nonnormal
+                    if v not in self._order_vars
+                ])
+            else:
+                processing_order = self._categorical + self._normal + self._nonnormal
+            
+            for col in processing_order:
+                display_name = self._rename.get(col, col)
+                
+                if col in self._categorical:
+                    categories = var_categories[col]
+                    counts = self._my_value_counts(df, col, categories)
+                    
+                    # Add rows for each category
+                    for cat in categories:
+                        df_dists.loc[(display_name, str(cat)), "value"] = counts.loc[cat, col]
+                
+                elif col in self._normal:
+                    vals = pd.to_numeric(df[col], errors="coerce")
+                    if self._format_normal == "Mean ± SD":
+                        mean_val = np.round(vals.mean(), self._decimals)
+                        std_val = np.round(vals.std(), self._decimals)
+                        df_dists.loc[(display_name, " "), "value"] = f"{mean_val} ± {std_val}"
+                    elif self._format_normal == "Mean":
+                        df_dists.loc[(display_name, " "), "value"] = np.round(vals.mean(), self._decimals)
+                    else:  # SD
+                        df_dists.loc[(display_name, " "), "value"] = np.round(vals.std(), self._decimals)
+                
+                elif col in self._nonnormal:
+                    vals = pd.to_numeric(df[col], errors="coerce")
+                    if self._format_nonnormal == "Median [IQR]":
+                        median_val = np.round(vals.median(), self._decimals)
+                        q25 = np.round(vals.quantile(0.25), self._decimals)
+                        q75 = np.round(vals.quantile(0.75), self._decimals)
+                        df_dists.loc[(display_name, " "), "value"] = f"{median_val} [{q25}, {q75}]"
+                    elif self._format_nonnormal == "Mean":
+                        df_dists.loc[(display_name, " "), "value"] = np.round(vals.mean(), self._decimals)
+                    else:  # SD
+                        df_dists.loc[(display_name, " "), "value"] = np.round(vals.std(), self._decimals)
+                
+                # Add missingness row
+                if self._missingness:
+                    n = len(df)
+                    n_miss = df[col].isna().sum() if n > 0 else 0
+                    perc = round(n_miss / n * 100, self._decimals) if n > 0 else 0
+                    
+                    if self._format_cat == "%":
+                        df_dists.loc[(display_name, "Missing"), "value"] = perc
+                    elif self._format_cat == "N":
+                        df_dists.loc[(display_name, "Missing"), "value"] = (
+                            f"{n_miss:,}" if self._thousands_sep else n_miss
+                        )
+                    else:
+                        df_dists.loc[(display_name, "Missing"), "value"] = (
+                            f"{n_miss:,} ({perc})" if self._thousands_sep else f"{n_miss} ({perc})"
+                        )
+                
+                # Add label suffix
+                if self._label_suffix:
+                    if col in self._categorical:
+                        suffix = ", " + self._format_cat
+                    elif col in self._normal:
+                        suffix = ", " + self._format_normal
+                    else:
+                        suffix = ", " + self._format_nonnormal
+                    
+                    # Rename the variable level
+                    df_dists = df_dists.rename(
+                        index={display_name: display_name + suffix},
+                        level=0
+                    )
+            
+            # Add overall count
+            df_dists.loc[("Overall", " "), "value"] = (
+                f"{len(df):,}" if self._thousands_sep else len(df)
+            )
+            
+            df_dists.rename(columns={"value": i}, inplace=True)
+            table = pd.concat([table, df_dists], axis=1)
+        
+        # Set up multi-level column index
+        table = table.set_axis(
+            pd.MultiIndex.from_product([["Cohort"], table.columns]), axis=1
+        )
+        table.index.names = ["Variable", "Value"]
+        
+        # Sort to put Overall first
+        return table.sort_index(
+            level=0,
+            key=lambda x: x == "Overall",
+            ascending=False,
+            sort_remaining=False
+        )
+
+
+# TableDrifts Class
+
+class TableDrifts:
+    """
+    Calculate standardized mean differences (SMDs) between cohorts.
+    
+    SMDs quantify the magnitude of distribution changes between consecutive
+    cohorts, helping identify demographic drift during cohort selection.
+    
+    Parameters
+    ----------
+    dfs : list of pd.DataFrame
+        List of DataFrames representing sequential cohorts.
+    categorical : list, optional
+        List of categorical variable names.
+    normal : list, optional
+        List of normally-distributed variable names.
+    nonnormal : list, optional
+        List of non-normally distributed variable names.
+    order_vars : list, optional
+        List specifying the display order of variables.
+    order_classes : dict, optional
+        Dictionary mapping variable names to category order lists.
+    limit : int or dict, optional
+        Maximum categories to include in SMD calculations.
+    decimals : int, default=2
+        Number of decimal places for SMD values.
+    missingness : bool, default=True
+        Whether to include missingness in calculations.
+    rename : dict, optional
+        Variable name mappings.
+    """
+    
+    def __init__(
+        self,
+        dfs: List[pd.DataFrame],
+        categorical: Optional[List[str]] = None,
+        normal: Optional[List[str]] = None,
+        nonnormal: Optional[List[str]] = None,
+        order_vars: Optional[List[str]] = None,
+        order_classes: Optional[Dict[str, List[str]]] = None,
+        limit: Optional[Union[int, Dict[str, int]]] = None,
+        decimals: int = 2,
+        missingness: bool = True,
+        rename: Optional[Dict[str, str]] = None,
+    ):
+        if not dfs:
+            raise ValueError("dfs list cannot be empty")
+        
+        self._dfs = dfs
+        self._categorical = categorical or []
+        self._normal = normal or []
+        self._nonnormal = nonnormal or []
+        self._order_vars = order_vars
+        self._order_classes = order_classes or {}
+        self._limit = limit
+        self._decimals = decimals
+        self._missingness = missingness
+        self._rename = rename or {}
+        
+        # Validate variables exist
+        if dfs:
+            validate_variables(
+                dfs[0],
+                self._categorical,
+                self._normal,
+                self._nonnormal,
+                "TableDrifts"
+            )
+        
+        # Build complete rename mapping
+        for c in self._categorical + self._normal + self._nonnormal:
+            if c not in self._rename:
+                self._rename[c] = c
+        
+        # Create helper tables for calculations
+        self._table_flows = TableFlows(dfs, label_suffix=False, thousands_sep=False).view()
+        self._table_cat_n = TableCharacteristics(
+            dfs,
+            categorical=self._categorical,
+            normal=self._normal,
+            nonnormal=self._nonnormal,
+            order_classes=self._order_classes,
+            limit=self._limit,
+            decimals=self._decimals,
+            format_cat="N",
+            format_normal="Mean",
+            format_nonnormal="Mean",
+            thousands_sep=False,
+            missingness=self._missingness,
+            label_suffix=False,
+            rename=self._rename,
+        ).view()
+        self._table_cat_perc = TableCharacteristics(
+            dfs,
+            categorical=self._categorical,
+            normal=self._normal,
+            nonnormal=self._nonnormal,
+            order_classes=self._order_classes,
+            limit=self._limit,
+            decimals=self._decimals,
+            format_cat="%",
+            format_normal="SD",
+            format_nonnormal="SD",
+            thousands_sep=False,
+            missingness=self._missingness,
+            label_suffix=False,
+            rename=self._rename,
+        ).view()
+
+    def __repr__(self) -> str:
+        n_vars = len(self._categorical) + len(self._normal) + len(self._nonnormal)
+        return f"TableDrifts(cohorts={len(self._dfs)}, variables={n_vars})"
+
+    def _get_limit_for_var(self, var: str) -> Optional[int]:
+        """Get the category limit for a specific variable."""
+        if self._limit is None:
+            return None
+        if isinstance(self._limit, int):
+            return self._limit
+        return self._limit.get(var)
+
+    def _cat_smd_binary(
+        self,
+        p1: float,
+        p2: float,
+        n1: int,
+        n2: int
+    ) -> float:
+        """
+        Calculate SMD for a binary categorical variable.
+        
+        Uses Cohen's h with Hedges' correction for small samples.
+        
+        Returns np.nan if calculation cannot be performed.
+        """
+        # Handle edge cases
+        if n1 <= 0 or n2 <= 0:
+            return np.nan
+        
+        diff = abs(p1 - p2)
+        pooled_var = (p1 * (1 - p1) + p2 * (1 - p2)) / 2
+        
+        if pooled_var <= 0:
+            return np.nan
+        
+        smd = diff / np.sqrt(pooled_var)
+        
+        # Hedges' correction for small samples
+        df = n1 + n2 - 2
+        if df > 0:
+            correction = 1 - (3 / (4 * df - 1))
+            smd *= correction
+        
+        return np.round(smd, self._decimals)
+
+    def _cat_smd_multinomial(
+        self,
+        p1: np.ndarray,
+        p2: np.ndarray,
+        n1: int,
+        n2: int
+    ) -> float:
+        """
+        Calculate SMD for a multinomial categorical variable.
+        
+        Uses Mahalanobis distance approach with pooled covariance matrix.
+        
+        Returns np.nan if calculation cannot be performed.
+        """
+        p1, p2 = np.asarray(p1, dtype=float), np.asarray(p2, dtype=float)
+        
+        # Handle edge cases
+        if n1 <= 0 or n2 <= 0 or len(p1) < 2:
+            return np.nan
+        
+        # Calculate covariance matrices for each group
+        def calc_cov(p):
+            v = p * (1 - p)
+            c = -np.outer(p, p)
+            np.fill_diagonal(c, v)
+            return c
+        
+        cov1, cov2 = calc_cov(p1), calc_cov(p2)
+        pooled_cov = (cov1 + cov2) / 2
+        
+        diff = (p2 - p1).reshape(1, -1)
+        
+        try:
+            # Use pseudo-inverse for numerical stability
+            sq = diff @ np.linalg.pinv(pooled_cov) @ diff.T
+            smd = np.sqrt(max(0, sq[0, 0]))  # Ensure non-negative
+        except Exception:
+            return np.nan
+        
+        return np.round(smd, self._decimals)
+
+    def _cont_smd(
+        self,
+        m1: float,
+        m2: float,
+        s1: float,
+        s2: float,
+        n1: int,
+        n2: int
+    ) -> float:
+        """
+        Calculate SMD for a continuous variable.
+        
+        Uses Cohen's d with Hedges' correction for small samples.
+        
+        Parameters
+        ----------
+        m1, m2 : float
+            Means of the two groups.
+        s1, s2 : float
+            Standard deviations of the two groups.
+        n1, n2 : int
+            Sample sizes of the two groups.
+            
+        Returns
+        -------
+        float
+            Standardized mean difference, or np.nan if calculation fails.
+        """
+        # Handle edge cases
+        if n1 <= 0 or n2 <= 0:
+            return np.nan
+        
+        # Handle missing/invalid values
+        if pd.isna(m1) or pd.isna(m2) or pd.isna(s1) or pd.isna(s2):
+            return np.nan
+        
+        # Pooled standard deviation
+        denom = np.sqrt((s1**2 + s2**2) / 2)
+        
+        if denom <= 0 or np.isnan(denom):
+            return np.nan
+        
+        smd = (m2 - m1) / denom
+        
+        # Hedges' correction for small samples
+        df = 4 * (n1 + n2 - 2) - 1
+        if df > 0:
+            correction = 1 - (3 / df)
+            smd *= correction
+        
+        return np.round(smd, self._decimals)
+
+    def view(self) -> pd.DataFrame:
+        """
+        Generate the SMD table.
+        
+        Returns
+        -------
+        pd.DataFrame
+            Table of SMD values between consecutive cohorts.
+        """
+        inverse_rename = {v: k for k, v in self._rename.items()}
+        
+        # Get variable names (excluding Overall)
+        cols = [
+            c for c in self._table_cat_n.index.get_level_values(0).unique()
+            if c != "Overall"
+        ]
+        
+        table = pd.DataFrame(index=cols, columns=self._table_flows.columns)
+        
+        for i, display_name in enumerate(cols):
+            orig_name = inverse_rename.get(display_name, display_name)
+            
+            for j, col in enumerate(self._table_flows.columns):
+                if orig_name in self._categorical:
+                    # Get category rows (excluding Missing)
+                    cat_rows = [
+                        r for r in self._table_cat_n.index
+                        if r[0] == display_name and r[1] not in ["Missing"]
+                    ]
+                    
+                    if not cat_rows:
+                        table.iloc[i, j] = np.nan
+                        continue
+                    
+                    # Get proportions for each group
+                    p1 = [self._table_cat_perc.loc[r, :].iloc[j] / 100 for r in cat_rows]
+                    p2 = [self._table_cat_perc.loc[r, :].iloc[j + 1] / 100 for r in cat_rows]
+                    
+                    # Get sample sizes
+                    n1 = int(sum(self._table_cat_n.loc[r, :].iloc[j] for r in cat_rows))
+                    n2 = int(sum(self._table_cat_n.loc[r, :].iloc[j + 1] for r in cat_rows))
+                    
+                    if len(p1) == 2:
+                        # Binary variable
+                        table.iloc[i, j] = self._cat_smd_binary(p1[0], p2[0], n1, n2)
+                    elif len(p1) > 2:
+                        # Multinomial variable
+                        table.iloc[i, j] = self._cat_smd_multinomial(
+                            np.array(p1), np.array(p2), n1, n2
+                        )
+                    else:
+                        table.iloc[i, j] = np.nan
+                
+                elif orig_name in self._normal or orig_name in self._nonnormal:
+                    # Continuous variable
+                    m1 = self._table_cat_n.loc[(display_name, " "), :].iloc[j]
+                    s1 = self._table_cat_perc.loc[(display_name, " "), :].iloc[j]
+                    m2 = self._table_cat_n.loc[(display_name, " "), :].iloc[j + 1]
+                    s2 = self._table_cat_perc.loc[(display_name, " "), :].iloc[j + 1]
+                    n1 = int(self._table_cat_n.loc[("Overall", " "), :].iloc[j])
+                    n2 = int(self._table_cat_n.loc[("Overall", " "), :].iloc[j + 1])
+                    
+                    table.iloc[i, j] = self._cont_smd(m1, m2, s1, s2, n1, n2)
+        
+        return table
+
+
+# TablePValues Class
+
+class TablePValues:
+    """
+    Calculate p-values between consecutive cohorts.
+    
+    Uses appropriate statistical tests based on variable type:
+    - Categorical: Chi-square test (or Fisher's exact for 2x2 tables)
+    - Normal continuous: Welch's t-test
+    - Non-normal continuous: Kruskal-Wallis test
+    - Missingness: Two-proportion z-test
+    
+    Supports multiple testing correction (Bonferroni or Benjamini-Hochberg FDR).
+    
+    Parameters
+    ----------
+    dfs : list of pd.DataFrame
+        List of DataFrames representing sequential cohorts.
+    categorical : list, optional
+        List of categorical variable names.
+    normal : list, optional
+        List of normally-distributed variable names.
+    nonnormal : list, optional
+        List of non-normally distributed variable names.
+    order_vars : list, optional
+        List specifying the display order of variables.
+    order_classes : dict, optional
+        Dictionary mapping variable names to category order lists.
+    limit : int or dict, optional
+        Maximum categories to include in tests.
+    alpha : float, default=0.05
+        Significance level.
+    decimals : int, default=3
+        Number of decimal places for p-values.
+    min_n_expected : int, default=5
+        Minimum expected count for chi-square test validity.
+    min_samples : int, default=30
+        Minimum sample size for parametric tests.
+    rename : dict, optional
+        Variable name mappings.
+    correction : str, default="none"
+        Multiple testing correction method applied globally across all
+        non-missingness tests. Options: "none", "bonferroni", "fdr_bh"/"bh".
+    """
+    
+    VALID_CORRECTIONS = ["none", "bonferroni", "fdr_bh", "bh"]
+    
+    def __init__(
+        self,
+        dfs: List[pd.DataFrame],
+        categorical: Optional[List[str]] = None,
+        normal: Optional[List[str]] = None,
+        nonnormal: Optional[List[str]] = None,
+        order_vars: Optional[List[str]] = None,
+        order_classes: Optional[Dict[str, List[str]]] = None,
+        limit: Optional[Union[int, Dict[str, int]]] = None,
+        alpha: float = 0.05,
+        decimals: int = 3,
+        min_n_expected: int = 5,
+        min_samples: int = 30,
+        rename: Optional[Dict[str, str]] = None,
+        correction: str = "none",
+    ):
+        from scipy import stats  # noqa: F401
+        
+        if not dfs:
+            raise ValueError("dfs list cannot be empty")
+        
+        self._dfs = dfs
+        self._categorical = categorical or []
+        self._normal = normal or []
+        self._nonnormal = nonnormal or []
+        self._order_vars = order_vars
+        self._order_classes = order_classes or {}
+        self._limit = limit
         self._alpha = alpha
         self._decimals = decimals
         self._min_n_expected = min_n_expected
         self._min_samples = min_samples
-        self._rename = {} if rename is None else rename
-      
+        self._rename = rename or {}
         
-        # Create TableFlows object
-        self._table_flows = TableFlows(
-            dfs=self._dfs,
-            label_suffix=False,
-            thousands_sep=False,
-        )
+        # Validate and normalize correction method
+        correction = correction.lower() if isinstance(correction, str) else "none"
+        if correction not in self.VALID_CORRECTIONS:
+            raise ValueError(
+                f"Invalid correction method: '{correction}'. "
+                f"Valid options are: {', '.join(self.VALID_CORRECTIONS)}"
+            )
+        if correction == "bh":
+            correction = "fdr_bh"
+        self._correction = correction
         
-        # Make rename dict have the same keys as the original variable names if no rename
+        # Validate variables exist
+        if dfs:
+            validate_variables(
+                dfs[0],
+                self._categorical,
+                self._normal,
+                self._nonnormal,
+                "TablePValues"
+            )
+        
+        self._table_flows = TableFlows(dfs=self._dfs, label_suffix=False, thousands_sep=False)
+        
+        # Build complete rename mapping
         for c in self._categorical + self._normal + self._nonnormal:
-            if c not in self._rename.keys():
+            if c not in self._rename:
                 self._rename[c] = c
-    
-    def _chi2_test(self, df1, df2, var):
-        """Perform Chi-squared test for categorical variables."""
-        from scipy import stats
-        import numpy as np
-        import pandas as pd
+
+    def __repr__(self) -> str:
+        n_vars = len(self._categorical) + len(self._normal) + len(self._nonnormal)
+        return f"TablePValues(cohorts={len(self._dfs)}, variables={n_vars}, correction='{self._correction}')"
+
+    def _benjamini_hochberg(self, pvals: np.ndarray) -> np.ndarray:
+        """
+        Apply Benjamini-Hochberg FDR correction.
         
-        # Check if we have enough non-missing values
-        if df1[var].dropna().empty or df2[var].dropna().empty:
-            return 1.0, False  # Return p=1.0 (no difference) if data is missing
+        Parameters
+        ----------
+        pvals : np.ndarray
+            Array of p-values to correct.
+            
+        Returns
+        -------
+        np.ndarray
+            Corrected p-values.
+        """
+        n = len(pvals)
+        if n == 0:
+            return pvals
         
-        # Get all unique categories across both cohorts
-        all_values = pd.concat([df1[var].dropna(), df2[var].dropna()]).unique()
+        sorted_indices = np.argsort(pvals)
+        sorted_pvals = pvals[sorted_indices]
         
-        if len(all_values) < 2:
-            return 1.0, False  # Return p=1.0 if there's only one category
+        ranks = np.arange(1, n + 1)
+        adjusted = sorted_pvals * n / ranks
         
-        # Create contingency table
-        table = np.zeros((2, len(all_values)))
+        # Enforce monotonicity (from largest to smallest)
+        adjusted = np.minimum.accumulate(adjusted[::-1])[::-1]
+        adjusted = np.minimum(adjusted, 1.0)
         
-        for i, val in enumerate(all_values):
-            table[0, i] = (df1[var] == val).sum()
-            table[1, i] = (df2[var] == val).sum()
+        result = np.empty(n)
+        result[sorted_indices] = adjusted
+        return result
+
+    def _apply_global_correction(
+        self,
+        pvals_df: pd.DataFrame,
+        missingness_mask: pd.Series
+    ) -> pd.DataFrame:
+        """
+        Apply multiple testing correction globally across all non-missingness tests.
         
-        # Check if the table is valid for chi-square
-        if np.any(table.sum(axis=0) == 0) or np.any(table.sum(axis=1) == 0):
-            return 1.0, False  # Return p=1.0 if any row or column sums to zero
+        Parameters
+        ----------
+        pvals_df : pd.DataFrame
+            DataFrame of raw p-values.
+        missingness_mask : pd.Series
+            Boolean Series indicating which rows are missingness tests.
+            
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with corrected p-values.
+        """
+        if self._correction == "none":
+            return pvals_df
         
-        try:
-            # Check if expected counts are sufficient for Chi-square
-            chi2_valid = True
-            _, p, _, expected = stats.chi2_contingency(table, correction=True)
-            
-            if np.any(expected < self._min_n_expected):
-                chi2_valid = False
-                # Use Fisher's exact test for 2x2 tables
-                if len(all_values) == 2:
-                    try:
-                        _, p = stats.fisher_exact(table)
-                    except:
-                        p = 1.0  # Default to no difference if test fails
-                # For larger tables with small expected counts, chi-square is best we can do
-            
-            return p, chi2_valid
-        except Exception as e:
-            print(f"Error in chi2_test for {var}: {e}")
-            return 1.0, False
-    
-    def _t_test(self, df1, df2, var):
-        """Perform two-sample t-test for normally distributed variables."""
-        from scipy import stats
-        import numpy as np
-        import pandas as pd
+        corrected = pvals_df.copy()
         
-        try:
-            # Convert data to numeric, coercing non-numeric values to NaN
-            vals1 = pd.to_numeric(df1[var], errors='coerce').dropna()
-            vals2 = pd.to_numeric(df2[var], errors='coerce').dropna()
-            
-            # Check if we have enough data
-            if len(vals1) < 2 or len(vals2) < 2:
-                return 1.0, False  # Return p=1.0 if not enough data
-            
-            # Check sample sizes
-            small_sample = len(vals1) < self._min_samples or len(vals2) < self._min_samples
-            
-            if small_sample:
-                # For small samples, use one-way ANOVA (equivalent to t-test for 2 groups)
-                f_stat, p = stats.f_oneway(vals1, vals2)
-            else:
-                # For larger samples, use two-sample t-test with Welch's correction
-                t_stat, p = stats.ttest_ind(vals1, vals2, equal_var=False)
-            
-            # Handle NaN p-value
-            if np.isnan(p):
-                return 1.0, False
-                
-            return p, small_sample
-        except Exception as e:
-            print(f"Error in t_test for {var}: {e}")
-            return 1.0, False
-    
-    def _kruskal_test(self, df1, df2, var):
-        """Perform Kruskal-Wallis test for non-normally distributed variables."""
-        from scipy import stats
-        import pandas as pd
-        import numpy as np
+        # Get all non-missingness p-values as a flat array
+        non_missing_rows = ~missingness_mask
+        non_missing_pvals = pvals_df.loc[non_missing_rows].values.flatten()
         
-        try:
-            # Convert data to numeric, coercing non-numeric values to NaN
-            vals1 = pd.to_numeric(df1[var], errors='coerce').dropna()
-            vals2 = pd.to_numeric(df2[var], errors='coerce').dropna()
-            
-            # Check if we have enough data
-            if len(vals1) < 2 or len(vals2) < 2:
-                return 1.0, False
-            
-            # Kruskal-Wallis H-test (non-parametric test)
-            h_stat, p = stats.kruskal(vals1, vals2)
-            
-            # Handle NaN p-value
-            if np.isnan(p):
-                return 1.0, False
-                
-            return p, True
-        except Exception as e:
-            print(f"Error in kruskal_test for {var}: {e}")
-            return 1.0, False
-    
-    def _missingness_test(self, df1, df2, var):
-        """Test difference in missingness proportion between cohorts using custom Z-test."""
-        import numpy as np
-        from scipy import stats
+        # Remove NaN values for correction
+        valid_mask = ~np.isnan(non_missing_pvals)
+        n_valid = np.sum(valid_mask)
         
-        try:
-            # Calculate missing proportions
-            n1 = len(df1)
-            n2 = len(df2)
-            
-            if n1 == 0 or n2 == 0:
-                return 1.0, False
-            
-            p1 = df1[var].isna().mean()
-            p2 = df2[var].isna().mean()
-            
-            # If proportions are identical, no need for test
-            if p1 == p2:
-                return 1.0, True
-            
-            # Calculate pooled proportion
-            p_pooled = (p1 * n1 + p2 * n2) / (n1 + n2)
-            
-            # Calculate standard error
-            se = np.sqrt(p_pooled * (1 - p_pooled) * (1/n1 + 1/n2))
-            
-            # If standard error is 0, avoid division by zero
-            if se == 0:
-                return 1.0, False
-            
-            # Calculate Z statistic
-            z = (p1 - p2) / se
-            
-            # Calculate two-tailed p-value using normal distribution
-            p_value = 2 * (1 - stats.norm.cdf(abs(z)))
-            
-            return p_value, True
-        except Exception as e:
-            print(f"Error in missingness_test for {var}: {e}")
-            return 1.0, False
-    
-    def view(self):
-        """Generate a table of p-values between consecutive cohorts, respecting variable order."""
-        import pandas as pd
-        import numpy as np
-        from scipy import stats
+        if n_valid == 0:
+            return corrected
         
-        # Get table flows as DataFrame
-        table_flows_df = self._table_flows.view()
-        cols = table_flows_df.columns
+        valid_pvals = non_missing_pvals[valid_mask]
         
-        # Determine variable processing order
-        all_vars = set(self._categorical + self._normal + self._nonnormal)
-        
-        if self._order_vars is not None:
-            # Process variables in the specified order
-            ordered_vars = [v for v in self._order_vars if v in all_vars]
-            # Add any remaining variables not in order_vars
-            remaining_vars = [v for v in self._categorical + self._normal + self._nonnormal 
-                            if v not in ordered_vars]
-            processing_order = ordered_vars + remaining_vars
+        if self._correction == "bonferroni":
+            corrected_pvals = np.minimum(valid_pvals * n_valid, 1.0)
+        elif self._correction == "fdr_bh":
+            corrected_pvals = self._benjamini_hochberg(valid_pvals)
         else:
-            # Use the default order
-            processing_order = self._categorical + self._normal + self._nonnormal
+            corrected_pvals = valid_pvals
         
-        # Create index for result table
-        index_tuples = [('Overall', ' ')]
+        # Put corrected values back
+        non_missing_flat = corrected.loc[non_missing_rows].values.flatten()
+        non_missing_flat[valid_mask] = corrected_pvals
         
-        # Add rows for main variables in the determined order
-        for var in processing_order:
-            var_name = self._rename[var]
-            index_tuples.append((var_name, ' '))
-        
-        # Add rows for missingness in the same order
-        for var in processing_order:
-            var_name = self._rename[var]
-            index_tuples.append((var_name, 'Missing'))
-        
-        # Create index and empty DataFrame
-        index = pd.MultiIndex.from_tuples(index_tuples, names=['Variable', 'Value'])
-        table = pd.DataFrame('', index=index, columns=cols)
-        
-        # Fill in p-values between consecutive cohorts
-        for col in cols:
-            # Extract cohort indices from column name (e.g., "0 to 1" -> 0, 1)
-            try:
-                from_cohort, to_cohort = map(int, col.split(' to '))
-                df1 = self._dfs[from_cohort]
-                df2 = self._dfs[to_cohort]
-                
-                # Calculate p-values for categorical variables
-                for var in self._categorical:
-                    try:
-                        # Main variable test
-                        p_value, valid = self._chi2_test(df1, df2, var)
-                        table.loc[(self._rename[var], ' '), col] = self._format_p_value(p_value, valid)
-                        
-                        # Missingness test
-                        miss_p, miss_valid = self._missingness_test(df1, df2, var)
-                        table.loc[(self._rename[var], 'Missing'), col] = self._format_p_value(miss_p, miss_valid)
-                    except Exception as e:
-                        print(f"Error processing {var}: {e}")
-                        table.loc[(self._rename[var], ' '), col] = 'ERROR'
-                        table.loc[(self._rename[var], 'Missing'), col] = 'ERROR'
-                
-                # Calculate p-values for normal variables
-                for var in self._normal:
-                    try:
-                        # Main variable test
-                        p_value, valid = self._t_test(df1, df2, var)
-                        table.loc[(self._rename[var], ' '), col] = self._format_p_value(p_value, valid)
-                        
-                        # Missingness test
-                        miss_p, miss_valid = self._missingness_test(df1, df2, var)
-                        table.loc[(self._rename[var], 'Missing'), col] = self._format_p_value(miss_p, miss_valid)
-                    except Exception as e:
-                        print(f"Error processing {var}: {e}")
-                        table.loc[(self._rename[var], ' '), col] = 'ERROR'
-                        table.loc[(self._rename[var], 'Missing'), col] = 'ERROR'
-                
-                # Calculate p-values for non-normal variables
-                for var in self._nonnormal:
-                    try:
-                        # Main variable test
-                        p_value, valid = self._kruskal_test(df1, df2, var)
-                        table.loc[(self._rename[var], ' '), col] = self._format_p_value(p_value, valid)
-                        
-                        # Missingness test
-                        miss_p, miss_valid = self._missingness_test(df1, df2, var)
-                        table.loc[(self._rename[var], 'Missing'), col] = self._format_p_value(miss_p, miss_valid)
-                    except Exception as e:
-                        print(f"Error processing {var}: {e}")
-                        table.loc[(self._rename[var], ' '), col] = 'ERROR'
-                        table.loc[(self._rename[var], 'Missing'), col] = 'ERROR'
-                        
-            except Exception as e:
-                print(f"Error processing column {col}: {e}")
-        
-        # Remove rows with all empty values
-        table = table.loc[~(table == '').all(axis=1)]
-        
-        # Add super header
-        table = table.set_axis(
-            pd.MultiIndex.from_product([['p-value'], table.columns]),
-            axis=1
+        corrected.loc[non_missing_rows] = non_missing_flat.reshape(
+            corrected.loc[non_missing_rows].shape
         )
         
-        # No need for custom sorting since we built the table with the correct order
-        # Just make sure Overall stays at the top
-        table = table.sort_index(
-            level=0, 
-            key=lambda x: x == 'Overall',
-            ascending=False, 
+        return corrected
+
+    def _chi2_test(
+        self,
+        df1: pd.DataFrame,
+        df2: pd.DataFrame,
+        var: str
+    ) -> Tuple[float, bool]:
+        """
+        Perform chi-square test for categorical variables.
+        
+        Falls back to Fisher's exact test for 2x2 tables with low expected counts.
+        """
+        from scipy import stats
+        
+        if df1[var].dropna().empty or df2[var].dropna().empty:
+            return np.nan, False
+        
+        all_vals = pd.concat([df1[var].dropna(), df2[var].dropna()]).unique()
+        
+        if len(all_vals) < 2:
+            return np.nan, False
+        
+        # Build contingency table
+        tbl = np.zeros((2, len(all_vals)))
+        for i, v in enumerate(all_vals):
+            tbl[0, i] = (df1[var] == v).sum()
+            tbl[1, i] = (df2[var] == v).sum()
+        
+        if np.any(tbl.sum(axis=0) == 0) or np.any(tbl.sum(axis=1) == 0):
+            return np.nan, False
+        
+        try:
+            _, p, _, exp = stats.chi2_contingency(tbl, correction=True)
+            valid = not np.any(exp < self._min_n_expected)
+            
+            # Use Fisher's exact for 2x2 tables with low expected counts
+            if not valid and len(all_vals) == 2:
+                try:
+                    _, p = stats.fisher_exact(tbl)
+                    valid = True
+                except Exception:
+                    pass
+            
+            return p, valid
+        except Exception:
+            return np.nan, False
+
+    def _t_test(
+        self,
+        df1: pd.DataFrame,
+        df2: pd.DataFrame,
+        var: str
+    ) -> Tuple[float, bool]:
+        """Perform Welch's t-test for normally-distributed continuous variables."""
+        from scipy import stats
+        
+        try:
+            v1 = pd.to_numeric(df1[var], errors="coerce").dropna()
+            v2 = pd.to_numeric(df2[var], errors="coerce").dropna()
+            
+            if len(v1) < 2 or len(v2) < 2:
+                return np.nan, False
+            
+            _, p = stats.ttest_ind(v1, v2, equal_var=False)
+            return (np.nan, False) if np.isnan(p) else (p, True)
+        except Exception:
+            return np.nan, False
+
+    def _kruskal_test(
+        self,
+        df1: pd.DataFrame,
+        df2: pd.DataFrame,
+        var: str
+    ) -> Tuple[float, bool]:
+        """Perform Kruskal-Wallis test for non-normal continuous variables."""
+        from scipy import stats
+        
+        try:
+            v1 = pd.to_numeric(df1[var], errors="coerce").dropna()
+            v2 = pd.to_numeric(df2[var], errors="coerce").dropna()
+            
+            if len(v1) < 2 or len(v2) < 2:
+                return np.nan, False
+            
+            _, p = stats.kruskal(v1, v2)
+            return (np.nan, False) if np.isnan(p) else (p, True)
+        except Exception:
+            return np.nan, False
+
+    def _missingness_test(
+        self,
+        df1: pd.DataFrame,
+        df2: pd.DataFrame,
+        var: str
+    ) -> Tuple[float, bool]:
+        """Perform two-proportion z-test for missingness differences."""
+        from scipy import stats
+        
+        n1, n2 = len(df1), len(df2)
+        
+        if n1 == 0 or n2 == 0:
+            return np.nan, False
+        
+        p1 = df1[var].isna().mean()
+        p2 = df2[var].isna().mean()
+        
+        if p1 == p2:
+            return 1.0, True
+        
+        # Pooled proportion
+        pp = (p1 * n1 + p2 * n2) / (n1 + n2)
+        
+        # Standard error
+        se = np.sqrt(pp * (1 - pp) * (1 / n1 + 1 / n2))
+        
+        if se == 0:
+            return np.nan, False
+        
+        z = (p1 - p2) / se
+        return 2 * (1 - stats.norm.cdf(abs(z))), True
+
+    def view(self) -> pd.DataFrame:
+        """
+        Generate the p-value table with significance indicators.
+        
+        Returns
+        -------
+        pd.DataFrame
+            Table of p-values with significance markers:
+            * p < 0.05, ** p < 0.01, *** p < 0.001.
+            † indicates corrected p-values.
+        """
+        tf = self._table_flows.view()
+        cols = tf.columns
+        proc = self._categorical + self._normal + self._nonnormal
+        
+        # Build index
+        idx = [("Overall", " ")] + \
+              [(self._rename[v], " ") for v in proc] + \
+              [(self._rename[v], "Missing") for v in proc]
+        index = pd.MultiIndex.from_tuples(idx, names=["Variable", "Value"])
+        
+        # Create missingness mask for correction
+        missingness_rows = pd.Series(
+            [r[1] == "Missing" for r in idx],
+            index=index
+        )
+        
+        # Calculate raw p-values
+        pvals = pd.DataFrame(np.nan, index=index, columns=cols)
+        
+        for col in cols:
+            try:
+                fr, to = map(int, col.split(" to "))
+                d1, d2 = self._dfs[fr], self._dfs[to]
+                
+                for v in self._categorical:
+                    p, _ = self._chi2_test(d1, d2, v)
+                    pvals.loc[(self._rename[v], " "), col] = p
+                    mp, _ = self._missingness_test(d1, d2, v)
+                    pvals.loc[(self._rename[v], "Missing"), col] = mp
+                
+                for v in self._normal:
+                    p, _ = self._t_test(d1, d2, v)
+                    pvals.loc[(self._rename[v], " "), col] = p
+                    mp, _ = self._missingness_test(d1, d2, v)
+                    pvals.loc[(self._rename[v], "Missing"), col] = mp
+                
+                for v in self._nonnormal:
+                    p, _ = self._kruskal_test(d1, d2, v)
+                    pvals.loc[(self._rename[v], " "), col] = p
+                    mp, _ = self._missingness_test(d1, d2, v)
+                    pvals.loc[(self._rename[v], "Missing"), col] = mp
+            except Exception:
+                pass
+        
+        # Apply global correction (excluding missingness tests)
+        corrected_pvals = self._apply_global_correction(pvals, missingness_rows)
+        
+        # Format p-values with significance indicators
+        table = pd.DataFrame("", index=index, columns=cols)
+        correction_indicator = "†" if self._correction != "none" else ""
+        
+        for col in cols:
+            for i in corrected_pvals.index:
+                p = corrected_pvals.loc[i, col]
+                if pd.notna(p):
+                    if p < 0.001:
+                        table.loc[i, col] = f"<0.001***{correction_indicator}"
+                    elif p < 0.01:
+                        table.loc[i, col] = f"{p:.{self._decimals}f}**{correction_indicator}"
+                    elif p < 0.05:
+                        table.loc[i, col] = f"{p:.{self._decimals}f}*{correction_indicator}"
+                    else:
+                        table.loc[i, col] = f"{p:.{self._decimals}f}{correction_indicator}"
+        
+        table = table.set_axis(
+            pd.MultiIndex.from_product([["p-value"], table.columns]), axis=1
+        )
+        
+        return table.sort_index(
+            level=0,
+            key=lambda x: x == "Overall",
+            ascending=False,
             sort_remaining=False
         )
+
+    def get_raw_pvalues(self) -> pd.DataFrame:
+        """
+        Get raw (uncorrected) p-values.
         
-        return table
+        Returns
+        -------
+        pd.DataFrame
+            Table of raw p-values without formatting or correction.
+        """
+        tf = self._table_flows.view()
+        cols = tf.columns
+        proc = self._categorical + self._normal + self._nonnormal
+        
+        idx = [("Overall", " ")] + \
+              [(self._rename[v], " ") for v in proc] + \
+              [(self._rename[v], "Missing") for v in proc]
+        index = pd.MultiIndex.from_tuples(idx, names=["Variable", "Value"])
+        pvals = pd.DataFrame(np.nan, index=index, columns=cols)
+        
+        for col in cols:
+            try:
+                fr, to = map(int, col.split(" to "))
+                d1, d2 = self._dfs[fr], self._dfs[to]
+                
+                for v in self._categorical:
+                    p, _ = self._chi2_test(d1, d2, v)
+                    pvals.loc[(self._rename[v], " "), col] = p
+                    mp, _ = self._missingness_test(d1, d2, v)
+                    pvals.loc[(self._rename[v], "Missing"), col] = mp
+                
+                for v in self._normal:
+                    p, _ = self._t_test(d1, d2, v)
+                    pvals.loc[(self._rename[v], " "), col] = p
+                    mp, _ = self._missingness_test(d1, d2, v)
+                    pvals.loc[(self._rename[v], "Missing"), col] = mp
+                
+                for v in self._nonnormal:
+                    p, _ = self._kruskal_test(d1, d2, v)
+                    pvals.loc[(self._rename[v], " "), col] = p
+                    mp, _ = self._missingness_test(d1, d2, v)
+                    pvals.loc[(self._rename[v], "Missing"), col] = mp
+            except Exception:
+                pass
+        
+        return pvals.sort_index(
+            level=0,
+            key=lambda x: x == "Overall",
+            ascending=False,
+            sort_remaining=False
+        )
+
+    def get_corrected_pvalues(self) -> pd.DataFrame:
+        """
+        Get corrected p-values (if correction is applied).
+        
+        Returns
+        -------
+        pd.DataFrame
+            Table of corrected p-values without formatting.
+        """
+        pvals = self.get_raw_pvalues()
+        
+        if self._correction == "none":
+            return pvals
+        
+        # Create missingness mask
+        missingness_rows = pd.Series(
+            [r[1] == "Missing" for r in pvals.index],
+            index=pvals.index
+        )
+        
+        return self._apply_global_correction(pvals, missingness_rows)
+
+
+# FlowDiagram Class
+
+class FlowDiagram:
+    """
+    Generate visual flow diagrams of cohort exclusion processes.
     
-    def _format_p_value(self, p_value, valid=True):
-        """Format p-value with appropriate symbols and significance indicators."""
-        import numpy as np
+    Creates publication-ready flow diagrams using Graphviz with embedded
+    distribution plots showing how variable distributions change at each step.
+    
+    Parameters
+    ----------
+    table_flows : TableFlows
+        TableFlows object with cohort size data.
+    table_characteristics : TableCharacteristics, optional
+        TableCharacteristics object for distribution plots.
+    table_drifts : TableDrifts, optional
+        TableDrifts object for SMD values.
+    table_pvalues : TablePValues, optional
+        TablePValues object for p-values.
+    new_cohort_labels : list of str, optional
+        Labels for cohort nodes.
+    exclusion_labels : list of str, optional
+        Labels for exclusion nodes.
+    box_width : float, default=2.5
+        Width of diagram boxes.
+    box_height : float, default=1.0
+        Height of diagram boxes.
+    plot_dists : bool, default=True
+        Whether to include distribution plots.
+    smds : bool, default=True
+        Whether to show SMD values.
+    smd_decimals : int, default=2
+        Decimal places for SMD values.
+    pvalues : bool, default=False
+        Whether to show p-values.
+    pvalue_decimals : int, default=3
+        Decimal places for p-values.
+    legend : bool, default=True
+        Whether to include a legend.
+    legend_with_vars : bool, default=True
+        Whether to include variable names in legend.
+    output_folder : str, default="imgs"
+        Output folder for generated files.
+    output_file : str, default="flow_diagram"
+        Base name for output files.
+    display_flow_diagram : bool, default=True
+        Whether to display the diagram.
+    cohort_node_color : str, default="white"
+        Fill color for cohort nodes.
+    exclusion_node_color : str, default="floralwhite"
+        Fill color for exclusion nodes.
+    categorical_bar_colors : list or dict, optional
+        Colors for categorical bars.
+    missing_value_color : str, default="lightgray"
+        Color for missing value bars.
+    continuous_var_color : str, default="lavender"
+        Color for continuous variable bars.
+    edge_color : str, default="black"
+        Color for diagram edges.
+    """
+    
+    def __init__(
+        self,
+        table_flows: TableFlows,
+        table_characteristics: Optional[TableCharacteristics] = None,
+        table_drifts: Optional[TableDrifts] = None,
+        table_pvalues: Optional[TablePValues] = None,
+        new_cohort_labels: Optional[List[str]] = None,
+        exclusion_labels: Optional[List[str]] = None,
+        box_width: float = 2.5,
+        box_height: float = 1.0,
+        plot_dists: bool = True,
+        smds: bool = True,
+        smd_decimals: int = 2,
+        pvalues: bool = False,
+        pvalue_decimals: int = 3,
+        legend: bool = True,
+        legend_with_vars: bool = True,
+        output_folder: str = "imgs",
+        output_file: str = "flow_diagram",
+        display_flow_diagram: bool = True,
+        cohort_node_color: str = "white",
+        exclusion_node_color: str = "floralwhite",
+        categorical_bar_colors: Optional[Union[List[str], Dict[str, List[str]]]] = None,
+        missing_value_color: str = "lightgray",
+        continuous_var_color: str = "lavender",
+        edge_color: str = "black",
+    ):
+        self._table_flows = table_flows.view()
+        self._table_characteristics = table_characteristics
+        self._table_drifts = table_drifts
+        self._table_pvalues = table_pvalues
+        self._smd_decimals = smd_decimals
+        self._pvalues = pvalues
+        self._pvalue_decimals = pvalue_decimals
+        self._cohort_labels = new_cohort_labels or [
+            f"Cohort {i}" for i in range(len(self._table_flows.columns) + 1)
+        ]
+        self._exclusion_labels = exclusion_labels or [
+            f"Exclusion {i}" for i in range(len(self._table_flows.columns))
+        ]
+        self._width = box_width
+        self._height = box_height
+        self._plot_dists = plot_dists
+        self._smds = smds if plot_dists else False
+        self._legend = legend if plot_dists else False
+        self._legend_with_vars = legend_with_vars
+        self._output_file = output_file
+        self._output_folder = output_folder
+        self._cohort_node_color = cohort_node_color
+        self._exclusion_node_color = exclusion_node_color
+        self._categorical_bar_colors = categorical_bar_colors
+        self._missing_value_color = missing_value_color
+        self._continuous_var_color = continuous_var_color
+        self._edge_color = edge_color
+        self._display = display_flow_diagram
         
-        # If p_value is nan or none, return empty string
-        if p_value is None or (isinstance(p_value, float) and np.isnan(p_value)):
-            return ''
+        os.makedirs(self._output_folder, exist_ok=True)
+
+    def __repr__(self) -> str:
+        n_cohorts = len(self._table_flows.columns) + 1
+        return f"FlowDiagram(cohorts={n_cohorts}, plot_dists={self._plot_dists})"
+
+    def _format_smd_value(self, v: Any) -> str:
+        """Format SMD value for display in plots."""
+        return format_smd(v, self._smd_decimals)
+
+    def _format_pvalue_value(self, p: Any) -> str:
+        """Format p-value for display in plots."""
+        if pd.isna(p) or p == "":
+            return ""
+        try:
+            if isinstance(p, str):
+                # Remove significance markers
+                return p.replace("*", "").replace("†", "").strip()
+            f = float(p)
+            if f < 0.001:
+                return "<.001"
+            return f"{f:.3f}"[1:] if f < 1 else f"{f:.2f}"
+        except Exception:
+            return str(p)
+
+    def _plot_dists_internal(self) -> None:
+        """Generate distribution plots for each cohort."""
+        import matplotlib.cm as cm
+        import matplotlib.colors as mcolors
         
-        if not valid:
-            prefix = "†"  # Mark small sample sizes or invalid tests
+        imgs_dir = os.path.join(self._output_folder, "imgs")
+        os.makedirs(imgs_dir, exist_ok=True)
+        
+        categorical = self._table_characteristics._categorical
+        table = self._table_characteristics.view()
+        table_smds = self._table_drifts.view() if self._smds else None
+        table_pvals = self._table_pvalues.view() if self._pvalues and self._table_pvalues else None
+        
+        vars_list = [
+            v for v in table.index.get_level_values(0).unique() if v != "Overall"
+        ]
+        cohorts = table.columns.get_level_values(1).unique().tolist()
+        
+        # Assign colors to categorical variables
+        var_colors = {
+            var: cm.get_cmap("tab10")(i % 10) for i, var in enumerate(categorical)
+        }
+        legend_handles, legend_labels = [], []
+        
+        # Pre-compute sorted order of categories for each variable
+        var_sorted_categories = {}
+        for var in vars_list:
+            orig_var = var.split(", ")[0] if ", " in var else var
+            var_original = next(
+                (k for k, v in self._table_characteristics._rename.items() if v == orig_var),
+                orig_var,
+            )
+            if var_original in categorical:
+                vals = [
+                    v for v in table.loc[
+                        table.index.get_level_values(0) == var
+                    ].index.get_level_values(1)
+                    if v not in ["Missing"]
+                ]
+                # Get percentages for sorting
+                percs = {}
+                for v in vals:
+                    try:
+                        val = table.loc[(var, v), ("Cohort", 0)]
+                        if isinstance(val, str):
+                            val = (
+                                float(val.replace("%", "").split("(")[-1].replace(")", ""))
+                                if "(" in val
+                                else float(val.replace("%", ""))
+                            )
+                        percs[v] = float(val)
+                    except Exception:
+                        percs[v] = 0
+                var_sorted_categories[var] = sorted(
+                    percs.keys(), key=lambda x: percs[x], reverse=True
+                )
+        
+        # Font sizes for plots
+        label_fontsize = 18
+        value_fontsize = 15
+        bar_height = 0.9
+        
+        for c, coh in enumerate(cohorts):
+            num_vars = len(vars_list)
+            fig_height = max(4.5, num_vars * 1.1)
+            
+            # Determine figure width based on columns shown
+            if self._smds and self._pvalues:
+                fig, ax = plt.subplots(1, 1, figsize=(10, fig_height), dpi=150)
+                ax.set_xlim([-32, 125])
+            elif self._smds or self._pvalues:
+                fig, ax = plt.subplots(1, 1, figsize=(9.5, fig_height), dpi=150)
+                ax.set_xlim([-18, 125])
+            else:
+                fig, ax = plt.subplots(1, 1, figsize=(9, fig_height), dpi=150)
+                ax.set_xlim([0, 125])
+            
+            for v, var in enumerate(vars_list):
+                orig_var = var.split(", ")[0] if ", " in var else var
+                var_original = next(
+                    (k for k, vn in self._table_characteristics._rename.items() if vn == orig_var),
+                    orig_var,
+                )
+                
+                if var_original in categorical:
+                    vals = var_sorted_categories.get(var, [])
+                    cum = 0
+                    
+                    for vi, val in enumerate(vals):
+                        value = table.loc[(var, val), ("Cohort", coh)]
+                        if isinstance(value, str):
+                            try:
+                                value = (
+                                    float(
+                                        value.replace("%", "")
+                                        .split("(")[-1]
+                                        .replace(")", "")
+                                    )
+                                    if "(" in value
+                                    else float(value.replace("%", ""))
+                                )
+                            except Exception:
+                                value = 0
+                        value = float(value) if not isinstance(value, (int, float)) else value
+                        
+                        # Determine bar color
+                        if isinstance(self._categorical_bar_colors, dict) and (
+                            var_original in self._categorical_bar_colors
+                        ):
+                            col_list = self._categorical_bar_colors[var_original]
+                            color = col_list[vi] if vi < len(col_list) else None
+                            bar = (
+                                ax.barh(
+                                    v, value, left=cum, height=bar_height,
+                                    color=color, edgecolor="white", linewidth=0.5,
+                                )
+                                if color
+                                else ax.barh(
+                                    v, value, left=cum, height=bar_height,
+                                    edgecolor="white", linewidth=0.5,
+                                )
+                            )
+                        elif (
+                            self._categorical_bar_colors
+                            and isinstance(self._categorical_bar_colors, list)
+                            and vi < len(self._categorical_bar_colors)
+                        ):
+                            bar = ax.barh(
+                                v, value, left=cum, height=bar_height,
+                                color=self._categorical_bar_colors[vi],
+                                edgecolor="white", linewidth=0.5,
+                            )
+                        elif var_original in var_colors:
+                            bc = var_colors[var_original]
+                            lt = 0.3 + 0.6 * (vi / max(1, len(vals) - 1))
+                            ac = mcolors.rgb_to_hsv(bc[:3])
+                            ac[1] *= lt
+                            ac[2] = min(1.0, ac[2] * (1.5 - lt * 0.5))
+                            bar = ax.barh(
+                                v, value, left=cum, height=bar_height,
+                                color=mcolors.hsv_to_rgb(ac),
+                                edgecolor="white", linewidth=0.5,
+                            )
+                        else:
+                            bar = ax.barh(
+                                v, value, left=cum, height=bar_height,
+                                edgecolor="white", linewidth=0.5,
+                            )
+                        
+                        if coh == 0:
+                            legend_handles.append(bar[0])
+                            legend_labels.append(
+                                f"{orig_var}: {val}" if self._legend_with_vars else val
+                            )
+                        
+                        # Show value labels inside bars
+                        if value > 5:
+                            ax.text(
+                                cum + value / 2, v,
+                                f"{value:.1f}",
+                                ha="center", va="center",
+                                color="white" if value > 25 else "black",
+                                fontsize=value_fontsize,
+                                fontweight="medium",
+                            )
+                        cum += value
+                    
+                    # Add missing values bar
+                    if (
+                        "Missing"
+                        in table.loc[
+                            table.index.get_level_values(0) == var
+                        ].index.get_level_values(1)
+                    ):
+                        mv = table.loc[(var, "Missing"), ("Cohort", coh)]
+                        if isinstance(mv, str):
+                            try:
+                                mv = (
+                                    float(
+                                        mv.replace("%", "")
+                                        .split("(")[-1]
+                                        .replace(")", "")
+                                    )
+                                    if "(" in mv
+                                    else float(mv.replace("%", ""))
+                                )
+                            except Exception:
+                                mv = 0
+                        if mv > 0:
+                            bar = ax.barh(
+                                v, mv, left=cum, height=bar_height,
+                                color=self._missing_value_color,
+                                hatch="///////",
+                                edgecolor="white", linewidth=0.5,
+                            )
+                            if coh == 0 and "Missing" not in legend_labels:
+                                legend_handles.append(bar[0])
+                                legend_labels.append("Missing")
+                            if mv > 5:
+                                ax.text(
+                                    cum + mv / 2, v,
+                                    f"{mv:.1f}",
+                                    ha="center", va="center",
+                                    color="black",
+                                    fontsize=value_fontsize,
+                                    fontweight="medium",
+                                )
+                    
+                    # Add SMD
+                    if coh > 0 and self._smds and table_smds is not None:
+                        if orig_var in table_smds.index:
+                            smd = table_smds.loc[orig_var, f"{coh-1} to {coh}"]
+                            ax.text(
+                                -3, v,
+                                self._format_smd_value(smd),
+                                ha="right", va="center",
+                                fontsize=value_fontsize,
+                                color="black", fontweight="medium",
+                            )
+                    
+                    # Add p-value
+                    if coh > 0 and self._pvalues and table_pvals is not None:
+                        vr = self._table_characteristics._rename.get(var_original, var_original)
+                        try:
+                            if (vr, " ") in table_pvals.index:
+                                pv = table_pvals.loc[(vr, " "), ("p-value", f"{coh-1} to {coh}")]
+                                ax.text(
+                                    -18 if self._smds else -3, v,
+                                    self._format_pvalue_value(pv),
+                                    ha="right", va="center",
+                                    fontsize=value_fontsize,
+                                    color="black", fontweight="medium",
+                                )
+                        except Exception:
+                            pass
+                else:
+                    # Continuous variable
+                    value = table.loc[(var, " "), ("Cohort", coh)]
+                    ax.barh(
+                        v, 100, left=0, height=bar_height,
+                        color=self._continuous_var_color,
+                        edgecolor="white", linewidth=0.5,
+                    )
+                    ax.text(
+                        50, v,
+                        f"{value}",
+                        ha="center", va="center",
+                        color="black",
+                        fontsize=value_fontsize,
+                        fontweight="medium",
+                    )
+                    
+                    # Add SMD
+                    if coh > 0 and self._smds and table_smds is not None:
+                        if orig_var in table_smds.index:
+                            smd = table_smds.loc[orig_var, f"{coh-1} to {coh}"]
+                            ax.text(
+                                -3, v,
+                                self._format_smd_value(smd),
+                                ha="right", va="center",
+                                fontsize=value_fontsize,
+                                color="black", fontweight="medium",
+                            )
+                    
+                    # Add p-value
+                    if coh > 0 and self._pvalues and table_pvals is not None:
+                        vr = self._table_characteristics._rename.get(var_original, var_original)
+                        try:
+                            if (vr, " ") in table_pvals.index:
+                                pv = table_pvals.loc[(vr, " "), ("p-value", f"{coh-1} to {coh}")]
+                                ax.text(
+                                    -18 if self._smds else -3, v,
+                                    self._format_pvalue_value(pv),
+                                    ha="right", va="center",
+                                    fontsize=value_fontsize,
+                                    color="black", fontweight="medium",
+                                )
+                        except Exception:
+                            pass
+                
+                # Variable label on the right
+                ax.text(
+                    105, v,
+                    orig_var,
+                    ha="left", va="center",
+                    fontsize=label_fontsize,
+                    color="black", fontweight="medium",
+                )
+            
+            # Add column headers
+            if self._smds and coh > 0:
+                ax.text(
+                    -3, len(vars_list) + 0.6,
+                    "SMD",
+                    ha="right", va="center",
+                    fontsize=label_fontsize,
+                    color="black", fontweight="bold",
+                )
+            if self._pvalues and coh > 0:
+                ax.text(
+                    -18 if self._smds else -3, len(vars_list) + 0.6,
+                    "p",
+                    ha="right", va="center",
+                    fontsize=label_fontsize,
+                    color="black", fontweight="bold",
+                )
+            
+            # Clean up axes
+            ax.set_yticks([])
+            ax.set_xticks([])
+            for sp in ax.spines.values():
+                sp.set_visible(False)
+            
+            plt.tight_layout()
+            plt.savefig(
+                os.path.join(imgs_dir, f"part{c}.svg"),
+                dpi=300,
+                bbox_inches="tight",
+            )
+            plt.close()
+        
+        # Create legend
+        if self._legend and legend_handles:
+            if "Missing" in legend_labels:
+                mi = legend_labels.index("Missing")
+                legend_labels.append(legend_labels.pop(mi))
+                legend_handles.append(legend_handles.pop(mi))
+            
+            lf, la = plt.subplots(figsize=(len(legend_labels) / 2.5, 2.8))
+            la.axis("off")
+            leg = la.legend(
+                legend_handles,
+                legend_labels,
+                loc="center",
+                ncol=1,
+                fontsize=label_fontsize,
+                frameon=True,
+                edgecolor="black",
+                fancybox=False,
+                title="Legend",
+                title_fontsize=label_fontsize,
+            )
+            leg.get_title().set_fontweight("bold")
+            leg.get_frame().set_linewidth(2)
+            lf.savefig(
+                os.path.join(imgs_dir, "legend.svg"),
+                dpi=300,
+                bbox_inches="tight",
+            )
+            plt.close(lf)
+
+    def view(self) -> None:
+        """Create and display the flow diagram."""
+        if self._plot_dists:
+            self._plot_dists_internal()
+        
+        os.makedirs(self._output_folder, exist_ok=True)
+        imgs_dir = os.path.join(self._output_folder, "imgs")
+        os.makedirs(imgs_dir, exist_ok=True)
+        
+        dot = graphviz.Digraph(
+            comment="Cohort Exclusion Process",
+            format="svg",
+            graph_attr={"fontname": "Helvetica", "splines": "ortho"},
+            node_attr={
+                "shape": "box",
+                "style": "filled",
+                "fixedsize": "true",
+                "width": str(self._width),
+                "height": str(self._height),
+                "fontname": "Helvetica",
+            },
+            edge_attr={
+                "dir": "forward",
+                "arrowhead": "vee",
+                "arrowsize": "0.5",
+                "minlen": "1",
+            },
+        )
+        
+        cols = self._table_flows.columns.tolist()
+        nc = len(cols)
+        
+        # Add cohort nodes
+        initial_counts = self._table_flows.loc["Initial, n"]
+        for i, (cnt, col) in enumerate(zip(initial_counts, cols)):
+            dot.node(
+                f"A{i}",
+                self._cohort_labels[i].replace("___", f"{cnt}"),
+                shape="box",
+                style="filled",
+                fillcolor=self._cohort_node_color,
+                fontname="Helvetica",
+            )
+        
+        dot.node(
+            f"A{nc}",
+            self._cohort_labels[-1].replace(
+                "___", f"{self._table_flows.loc['Result, n'].iloc[-1]}"
+            ),
+            shape="box",
+            style="filled",
+            fillcolor=self._cohort_node_color,
+            fontname="Helvetica",
+        )
+        
+        # Calculate plot width for image nodes
+        pw = (
+            2.8
+            if self._smds and self._pvalues
+            else (2.5 if self._smds or self._pvalues else 2.2)
+        )
+        
+        if self._plot_dists:
+            # Use relative path from output folder
+            img_path = os.path.join("imgs", f"part{nc}.svg")
+            dot.node(
+                f"plot_dist{nc}",
+                label="",
+                image=img_path,
+                imagepos="bc",
+                imagescale="true",
+                shape="box",
+                color="transparent",
+                width=str(self._width + pw),
+                height=str(self._height + 1.4),
+            )
+            with dot.subgraph() as s:
+                s.attr(rank="same")
+                s.node(f"A{nc}")
+                s.node(f"plot_dist{nc}")
+        
+        # Add exclusion nodes
+        removed = self._table_flows.loc["Removed, n"]
+        for i, (cnt, col) in enumerate(zip(removed, cols)):
+            dot.node(
+                f"E{i}",
+                self._exclusion_labels[i].replace("___", f"{cnt}"),
+                shape="box",
+                style="filled",
+                fillcolor=self._exclusion_node_color,
+            )
+        
+        # Add invisible nodes and edges for layout
+        for i in range(nc + 1):
+            dot.node(f"IA{i}", "", shape="point", height="0")
+        
+        for i in range(nc):
+            dot.edge(f"A{i}", f"IA{i}", arrowhead="none", color=self._edge_color)
+            dot.edge(f"IA{i}", f"A{i+1}", color=self._edge_color)
+            dot.edge(f"IA{i}", f"E{i}", constraint="false", color=self._edge_color)
+            with dot.subgraph() as s:
+                s.attr(rank="same")
+                s.node(f"IA{i}")
+                s.node(f"E{i}")
+        
+        if self._plot_dists:
+            for i in range(nc):
+                # Use relative path from output folder
+                img_path = os.path.join("imgs", f"part{i}.svg")
+                dot.node(
+                    f"plot_dist{i}",
+                    label="",
+                    image=img_path,
+                    imagepos="bc",
+                    imagescale="true",
+                    shape="box",
+                    color="transparent",
+                    width=str(self._width + pw),
+                    height=str(self._height + 1.4),
+                )
+                dot.edge(f"A{i}", f"plot_dist{i}", constraint="false", style="invis")
+                with dot.subgraph() as s:
+                    s.attr(rank="same")
+                    s.node(f"A{i}")
+                    s.node(f"plot_dist{i}")
+        
+        if self._legend:
+            # Use relative path from output folder
+            legend_path = os.path.join("imgs", "legend.svg")
+            dot.node(
+                "legend",
+                label="",
+                image=legend_path,
+                imagescale="true",
+                shape="box",
+                color="transparent",
+                imagepos="bl",
+                width=str(self._width + 1.8),
+                height=str(self._height + 1.9),
+            )
+            dot.edge("E0", "legend", style="invis")
+            with dot.subgraph() as s:
+                s.attr(rank="same")
+                s.node("E0")
+                s.node("legend")
+        
+        # Render from output folder so relative paths work
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(self._output_folder)
+            dot.render(
+                self._output_file,
+                view=self._display,
+                format="pdf",
+            )
+        finally:
+            os.chdir(original_cwd)
+
+
+# EasyFlow Class (Simplified Interface)
+
+class EasyFlow:
+    """
+    Simplified interface for creating equity-focused cohort flow diagrams.
+    
+    EasyFlow provides a chainable API for quick flow diagram generation
+    with automatic variable type detection.
+    
+    Parameters
+    ----------
+    data : pd.DataFrame
+        The initial cohort data.
+    title : str, default="Cohort Selection"
+        Title for the initial cohort.
+    auto_detect : bool, default=True
+        Whether to automatically detect variable types.
+        
+    Examples
+    --------
+    >>> from equiflow import EasyFlow
+    >>> 
+    >>> flow = (
+    ...     EasyFlow(df, title="Study Cohort")
+    ...     .categorize(['sex', 'race'])
+    ...     .measure_normal(['age'])
+    ...     .measure_nonnormal(['income'])
+    ...     .exclude(df['age'] >= 18, "Age < 18")
+    ...     .exclude(df['missing_data'] <= 0.5, "Too much missing data")
+    ...     .generate(output="my_flow", show=True)
+    ... )
+    """
+    
+    def __init__(
+        self,
+        data: pd.DataFrame,
+        title: str = "Cohort Selection",
+        auto_detect: bool = True
+    ):
+        validate_dataframe_not_empty(data, "EasyFlow.__init__")
+        
+        self._data = data.copy()
+        self._title = title
+        self._categorical_vars: List[str] = []
+        self._normal_vars: List[str] = []
+        self._nonnormal_vars: List[str] = []
+        self._exclusion_steps: List[Dict[str, Any]] = []
+        self._current_data = data.copy()
+        self._equiflow: Optional[EquiFlow] = None
+        
+        if auto_detect:
+            self._detect_variable_types()
+
+    def __repr__(self) -> str:
+        n_steps = len(self._exclusion_steps)
+        initial_n = len(self._data)
+        current_n = len(self._current_data)
+        return (
+            f"EasyFlow(steps={n_steps}, initial_n={initial_n:,}, "
+            f"current_n={current_n:,})"
+        )
+
+    def _detect_variable_types(self) -> None:
+        """
+        Automatically detect variable types based on data characteristics.
+        
+        Uses the following heuristics:
+        - Object/bool dtype or <= 10 unique values -> categorical
+        - Numeric with > 10 unique values -> check normality
+        - Normal distribution -> normal
+        - Non-normal distribution -> nonnormal
+        """
+        for col in self._data.columns:
+            # Skip columns with too much missing data
+            if self._data[col].isna().mean() > 0.5:
+                continue
+            
+            if self._data[col].dtype in ["object", "bool"]:
+                self._categorical_vars.append(col)
+            elif self._data[col].dtype.kind in "ifu":
+                n_unique = len(self._data[col].dropna().unique())
+                if n_unique <= 10:
+                    self._categorical_vars.append(col)
+                else:
+                    # Check for normality
+                    if check_normality(self._data[col]):
+                        self._normal_vars.append(col)
+                    else:
+                        self._nonnormal_vars.append(col)
+
+    def categorize(self, variables: List[str]) -> 'EasyFlow':
+        """
+        Set categorical variables.
+        
+        Parameters
+        ----------
+        variables : list of str
+            Names of categorical variables.
+            
+        Returns
+        -------
+        EasyFlow
+            Self, for method chaining.
+        """
+        self._categorical_vars = variables
+        return self
+
+    def measure_normal(self, variables: List[str]) -> 'EasyFlow':
+        """
+        Set normally-distributed continuous variables.
+        
+        Parameters
+        ----------
+        variables : list of str
+            Names of normal continuous variables.
+            
+        Returns
+        -------
+        EasyFlow
+            Self, for method chaining.
+        """
+        self._normal_vars = variables
+        return self
+
+    def measure_nonnormal(self, variables: List[str]) -> 'EasyFlow':
+        """
+        Set non-normally distributed continuous variables.
+        
+        Parameters
+        ----------
+        variables : list of str
+            Names of non-normal continuous variables.
+            
+        Returns
+        -------
+        EasyFlow
+            Self, for method chaining.
+        """
+        self._nonnormal_vars = variables
+        return self
+
+    def exclude(
+        self,
+        condition: Union[pd.Series, Callable[[pd.DataFrame], pd.Series]],
+        label: Optional[str] = None
+    ) -> 'EasyFlow':
+        """
+        Add an exclusion step.
+        
+        Note: Rows where condition is True are KEPT (retained).
+        This follows the same convention as EquiFlow.add_exclusion().
+        
+        Parameters
+        ----------
+        condition : pd.Series or callable
+            Boolean mask where True indicates rows to KEEP,
+            or a function that takes a DataFrame and returns such a mask.
+        label : str, optional
+            Label for this exclusion step (describes what was excluded).
+            
+        Returns
+        -------
+        EasyFlow
+            Self, for method chaining.
+            
+        Examples
+        --------
+        >>> # Keep patients 18 and older (exclude those under 18)
+        >>> flow.exclude(df['age'] >= 18, "Age < 18")
+        >>> 
+        >>> # Keep using a function
+        >>> flow.exclude(lambda d: d['score'] >= 50, "Low score")
+        """
+        label = label or f"Exclusion {len(self._exclusion_steps) + 1}"
+        
+        if callable(condition):
+            mask = condition(self._current_data)
+        elif isinstance(condition, pd.Series) and condition.dtype == bool:
+            # Align mask with current data
+            mask = pd.Series(False, index=self._current_data.index)
+            common_idx = self._current_data.index.intersection(condition.index)
+            mask.loc[common_idx] = condition.loc[common_idx]
         else:
-            prefix = ""
+            mask = condition
         
-        # Format the p-value
-        if p_value < 0.001:
-            return f"{prefix}<0.001***"
-        elif p_value < 0.01:
-            return f"{prefix}{p_value:.{self._decimals}f}**"
-        elif p_value < 0.05:
-            return f"{prefix}{p_value:.{self._decimals}f}*"
-        else:
-            return f"{prefix}{p_value:.{self._decimals}f}"
+        # KEEP rows where mask is True
+        new_data = self._current_data[mask]
+        
+        if new_data.empty:
+            warnings.warn(
+                f"Exclusion step '{label}' resulted in an empty cohort.",
+                UserWarning
+            )
+        
+        self._exclusion_steps.append({
+            "previous_data": self._current_data.copy(),
+            "condition": condition,
+            "new_data": new_data.copy(),
+            "label": label,
+        })
+        self._current_data = new_data
+        
+        return self
+
+    def generate(
+        self,
+        output: str = "flow_diagram",
+        show: bool = True,
+        format: str = "pdf",
+        pvalues: bool = False,
+        pvalue_decimals: int = 3,
+        pvalue_correction: str = "none",
+    ) -> 'EasyFlow':
+        """
+        Generate the flow diagram.
+        
+        Parameters
+        ----------
+        output : str, default="flow_diagram"
+            Base name for output files.
+        show : bool, default=True
+            Whether to display the diagram.
+        format : str, default="pdf"
+            Output format.
+        pvalues : bool, default=False
+            Whether to show p-values.
+        pvalue_decimals : int, default=3
+            Decimal places for p-values.
+        pvalue_correction : str, default="none"
+            Multiple testing correction method.
+            
+        Returns
+        -------
+        EasyFlow
+            Self, for method chaining.
+        """
+        if not self._exclusion_steps:
+            raise ValueError(
+                "No exclusion steps defined. Use exclude() to add steps."
+            )
+        
+        # Create EquiFlow object
+        ef = EquiFlow(
+            data=self._data,
+            initial_cohort_label=self._title,
+            categorical=self._categorical_vars,
+            normal=self._normal_vars,
+            nonnormal=self._nonnormal_vars,
+        )
+        
+        # Add exclusion steps
+        df = self._data.copy()
+        for i, step in enumerate(self._exclusion_steps):
+            if callable(step["condition"]):
+                mask = step["condition"](df)
+            elif isinstance(step["condition"], pd.Series):
+                mask = pd.Series(False, index=df.index)
+                common_idx = df.index.intersection(step["condition"].index)
+                mask.loc[common_idx] = step["condition"].loc[common_idx]
+            else:
+                mask = step["condition"]
+            
+            ef.add_exclusion(
+                keep=mask,
+                exclusion_reason=step["label"],
+                new_cohort_label=f"Step {i + 1}",
+            )
+            df = df[mask]
+        
+        self._equiflow = ef
+        
+        # Generate tables
+        self.flow_table = ef.view_table_flows()
+        self.characteristics = ef.view_table_characteristics()
+        self.drifts = ef.view_table_drifts()
+        
+        # Generate flow diagram
+        ef.plot_flows(
+            output_file=output,
+            display_flow_diagram=show,
+            pvalues=pvalues,
+            pvalue_decimals=pvalue_decimals,
+            pvalue_correction=pvalue_correction,
+        )
+        
+        return self

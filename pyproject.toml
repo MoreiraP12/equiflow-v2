@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "equiflow"
-version = "0.1.1a1"
+version = "0.1.7"
 authors = [
   { name="João Matos", email="jcmatos@mit.edu" },
 ]
@@ -23,7 +23,8 @@ dependencies = [
     "numpy",
     "pandas",
     "graphviz",
-    "matplotlib"
+    "matplotlib",
+    "scipy"
 ]
 
 [project.optional-dependencies]
