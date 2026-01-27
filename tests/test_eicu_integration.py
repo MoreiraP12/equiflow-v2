@@ -308,7 +308,6 @@ class TestEasyFlowEICU:
         assert len(flow._exclusion_steps) == 2
         assert len(flow._current_data) < len(data)
 
-    @pytest.mark.skip(reason="Known issue in library: Series ambiguous truth value in plot_flows")
     def test_easyflow_generate(self):
         """Test EasyFlow generate method."""
         data = generate_synthetic_eicu_data(n=500)
