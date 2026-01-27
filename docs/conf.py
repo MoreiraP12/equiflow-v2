@@ -8,7 +8,7 @@
 
 project = 'equiflow'
 copyright = '2024, João Matos'
-author = 'João Matos'
+authors = 'Jacob Ellen', 'Pedro Moreira', 'João Matos'
 
 release = '0.1.7'
 version = '0.1.7'
