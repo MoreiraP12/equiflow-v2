@@ -10,9 +10,9 @@ readme = "README.md"
 license = {text = "MIT License"}
 requires-python = ">=3.9"
 authors = [
-    {name = "João Matos", email = "jcmatos@mit.edu",
-    name = "Jacob Ellen", email="jgellen4@gmail.com" or "jellen@hms.harvard.edu",
-    name = "Pedro Moreira", email = "pedromoreirah3@gmail.com"}
+    {name = "João Matos", email = "jcmatos@mit.edu"},
+    {name = "Jacob Ellen", email = "jgellen4@gmail.com"},
+    {name = "Pedro Moreira", email = "pedromoreirah3@gmail.com"}
 ]
 maintainers = [
     {name = "João Matos", email = "jcmatos@mit.edu",
