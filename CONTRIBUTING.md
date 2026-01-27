@@ -6,8 +6,8 @@ Thank you for your interest in contributing to equiflow! This document provides 
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/joamats/equiflow.git
-   cd equiflow
+   git clone https://github.com/MoreiraP12/equiflow-v2.git
+   cd equiflow-v2
    ```
 
 2. **Create a virtual environment**
