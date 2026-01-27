@@ -47,7 +47,7 @@ from .equiflow import (
     FlowDiagram,
 )
 
-__author__ = "João Matos <jcmatos@mit.edu>"
+__author__ = "Jacob Ellen", "Pedro Moreira", "João Matos"
 __version__ = "0.1.7"
 __license__ = "MIT"
 
