@@ -171,18 +171,6 @@ If you use EquiFlow in your research, please cite our position paper:
 
 > Ellen JG, Matos J, Viola M, et al. Participant flow diagrams for health equity in AI. *J Biomed Inform*. 2024;152:104631. [https://doi.org/10.1016/j.jbi.2024.104631](https://doi.org/10.1016/j.jbi.2024.104631)
 
-```bibtex
-@article{ellen2024participant,
-  title={Participant flow diagrams for health equity in AI},
-  author={Ellen, Jacob G and Matos, Jo{\~a}o and Viola, Matthew and others},
-  journal={Journal of Biomedical Informatics},
-  volume={152},
-  pages={104631},
-  year={2024},
-  publisher={Elsevier},
-  doi={10.1016/j.jbi.2024.104631}
-}
-```
 
 ## License
 
