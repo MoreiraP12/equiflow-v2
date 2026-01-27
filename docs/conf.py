@@ -7,8 +7,8 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = 'equiflow'
-copyright = '2024, João Matos'
-authors = 'Jacob Ellen', 'Pedro Moreira', 'João Matos'
+copyright = '2024, João Matos, Jacob Ellen, Pedro Moreira'
+author = 'João Matos, Jacob Ellen, Pedro Moreira'  # Fixed: should be 'author' (singular) as a string
 
 release = '0.1.7'
 version = '0.1.7'
@@ -45,14 +45,6 @@ autoapi_options = ['members', 'undoc-members', 'special-members', ]
 html_theme = 'furo'
 
 html_theme_options = {
-    "icon_links": [
-        {
-            "name": "GitHub",
-            "url": "github.com/MoreiraP12/equiflow-v2",
-            "icon": "fa-brands fa-square-github",
-            "type": "fontawesome",
-        },
-    ],
     "show_version_warning_banner": True,
     "navigation_depth": 5,
     "secondary_sidebar_items": ["page-toc"],
@@ -61,8 +53,8 @@ html_theme_options = {
 }
 
 html_context = {
-    "github_user": "joamats",
-    "github_repo": "equiflow",
+    "github_user": "MoreiraP12",
+    "github_repo": "equiflow-v2",
     "github_version": "main",
     "doc_path": "docs",
 }
