@@ -1,17 +1,10 @@
 name: Publish to PyPI
 
 on:
-  # Trigger on version tags (recommended)
   push:
     tags:
-      - 'v*'  # Triggers on version tags like v0.1.7, v1.0.0, etc.
+      - 'v*'
   
-  # Trigger on pushes to main branch (optional - uncomment if desired)
-  # push:
-  #   branches:
-  #     - main
-  
-  # Allow manual trigger from GitHub UI
   workflow_dispatch:
     inputs:
       publish_to_pypi:
@@ -49,11 +42,9 @@ jobs:
         echo "Package version from pyproject.toml:"
         grep "^version = " pyproject.toml
         
-        # Extract version for validation
         VERSION=$(grep "^version = " pyproject.toml | cut -d'"' -f2)
         echo "Extracted version: $VERSION"
         
-        # If triggered by tag, verify tag matches version
         if [ "${{ github.ref_type }}" == "tag" ]; then
           TAG_VERSION="${GITHUB_REF#refs/tags/v}"
           echo "Tag version: $TAG_VERSION"
@@ -75,7 +66,6 @@ jobs:
         twine check dist/*
         echo "✅ Distribution check passed"
     
-    # Publish to Test PyPI (for testing)
     - name: Publish to Test PyPI
       if: |
         github.event_name == 'workflow_dispatch' && 
@@ -87,7 +77,6 @@ jobs:
         twine upload --repository testpypi dist/*
         echo "✅ Published to Test PyPI"
     
-    # Publish to production PyPI
     - name: Publish to PyPI
       if: |
         (github.event_name == 'push' && github.ref_type == 'tag') ||

@@ -1,43 +1,109 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "equiflow"
 version = "0.1.7"
-authors = [
-  { name="João Matos", email="jcmatos@mit.edu" },
-]
-license = {file = "LICENSE"}
-description = "equiflow is a package to generate equity-focused cohort selection flow diagrams."
+description = "A package to generate equity-focused cohort selection flow diagrams"
 readme = "README.md"
+license = {text = "MIT License"}
 requires-python = ">=3.9"
-keywords=["EquiFlow", "statistics", "cohort", "clinical research", "machine learning", "flow diagram", "equity"]
+authors = [
+    {name = "João Matos", email = "jcmatos@mit.edu"}
+]
+maintainers = [
+    {name = "João Matos", email = "jcmatos@mit.edu"}
+]
+keywords = [
+    "EquiFlow",
+    "flow diagram",
+    "cohort",
+    "clinical research",
+    "machine learning",
+    "equity",
+    "statistics"
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Healthcare Industry",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Topic :: Scientific/Engineering :: Visualization",
 ]
 dependencies = [
-    "numpy",
-    "pandas",
     "graphviz",
     "matplotlib",
-    "scipy"
+    "numpy",
+    "pandas",
+    "scipy",
 ]
 
 [project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1.0",
+    "build",
+    "twine",
+]
+docs = [
+    "sphinx>=7.0",
+    "sphinx-autoapi>=3.0",
+    "furo>=2024.0",
+]
 full = [
-    "pygraphviz>=1.7",  # This tries to compile against system graphviz
+    "pygraphviz",
 ]
 
-[tool.black]
-line-length = 119
-
-[tool.pyright]
-reportMissingImports = true
-
 [project.urls]
-homepage = "https://github.com/joamats/equiflow/"
-repository = "https://github.com/joamats/equiflow/"
+Homepage = "https://github.com/joamats/equiflow"
+Documentation = "https://equiflow.readthedocs.io"
+Repository = "https://github.com/joamats/equiflow"
+Issues = "https://github.com/joamats/equiflow/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["equiflow*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+
+[tool.ruff]
+line-length = 119
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501", "W503"]
+
+[tool.coverage.run]
+source = ["equiflow"]
+omit = ["tests/*", "docs/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]

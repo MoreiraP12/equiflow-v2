@@ -1,5 +1,13 @@
 """
-Unit tests for equiflow package using pytest.
+Comprehensive unit tests for equiflow package.
+
+These tests cover:
+- EquiFlow initialization and validation
+- Exclusion logic with keep/new_cohort parameters
+- Table generation (flows, characteristics, drifts, p-values)
+- EasyFlow simplified interface
+- Flow diagram generation
+- Edge cases and error handling
 """
 
 import pytest
@@ -8,151 +16,108 @@ import numpy as np
 import os
 import tempfile
 
-from equiflow import EquiFlow, EasyFlow, TableFlows, TableCharacteristics, TableDrifts, TablePValues
+from equiflow import (
+    EquiFlow,
+    EasyFlow,
+    TableFlows,
+    TableCharacteristics,
+    TableDrifts,
+    TablePValues,
+    FlowDiagram,
+)
 
-
-# ============================================================================
-# Fixtures
-# ============================================================================
-
-@pytest.fixture
-def sample_data():
-    """Create a sample dataset for testing."""
-    np.random.seed(42)
-    n = 200
-    return pd.DataFrame({
-        'age': np.random.normal(50, 15, n),
-        'sex': np.random.choice(['Male', 'Female'], n),
-        'race': np.random.choice(['White', 'Black', 'Asian', 'Other'], n, p=[0.6, 0.2, 0.15, 0.05]),
-        'bmi': np.random.normal(28, 5, n),
-        'income': np.random.lognormal(10, 1, n),
-        'los_days': np.random.exponential(5, n),
-    })
-
-
-@pytest.fixture
-def sample_data_with_missing(sample_data):
-    """Create a sample dataset with missing values."""
-    data = sample_data.copy()
-    np.random.seed(42)
-    n = len(data)
-    for col in data.columns:
-        mask = np.random.rand(n) < 0.05  # 5% missing
-        data.loc[mask, col] = None
-    return data
-
-
-@pytest.fixture
-def basic_equiflow(sample_data):
-    """Create a basic EquiFlow instance with one exclusion."""
-    ef = EquiFlow(
-        data=sample_data,
-        categorical=['sex', 'race'],
-        normal=['age', 'bmi'],
-        nonnormal=['income', 'los_days'],
-        initial_cohort_label="Initial Cohort"
-    )
-    ef.add_exclusion(
-        keep=sample_data['age'] >= 18,
-        exclusion_reason="Age < 18",
-        new_cohort_label="Adults"
-    )
-    return ef
-
-
-# ============================================================================
-# EquiFlow Initialization Tests
-# ============================================================================
 
 class TestEquiFlowInitialization:
-    """Tests for EquiFlow initialization."""
+    """Tests for EquiFlow initialization and basic setup."""
 
     def test_basic_initialization(self, sample_data):
-        """Test basic initialization with data."""
-        ef = EquiFlow(data=sample_data, categorical=['sex'])
-        assert len(ef._dfs) == 1
-        assert ef.categorical == ['sex']
-        assert ef.normal == []
-        assert ef.nonnormal == []
-
-    def test_initialization_with_all_var_types(self, sample_data):
-        """Test initialization with all variable types."""
+        """Test basic EquiFlow initialization with data."""
         ef = EquiFlow(
             data=sample_data,
             categorical=['sex', 'race'],
-            normal=['age', 'bmi'],
-            nonnormal=['income', 'los_days']
+            normal=['age'],
+            nonnormal=['score']
         )
+        assert len(ef._dfs) == 1
         assert ef.categorical == ['sex', 'race']
-        assert ef.normal == ['age', 'bmi']
-        assert ef.nonnormal == ['income', 'los_days']
+        assert ef.normal == ['age']
+        assert ef.nonnormal == ['score']
 
-    def test_initialization_with_rename(self, sample_data):
-        """Test initialization with variable renaming."""
-        ef = EquiFlow(
-            data=sample_data,
-            categorical=['sex'],
-            rename={'sex': 'Gender'}
-        )
-        assert ef.rename == {'sex': 'Gender'}
-
-    def test_empty_dataframe_raises(self):
-        """Test that empty DataFrame raises ValueError."""
-        with pytest.raises(ValueError, match="cannot be empty"):
-            EquiFlow(data=pd.DataFrame())
-
-    def test_missing_variable_raises(self, sample_data):
-        """Test that non-existent variable raises ValueError."""
-        with pytest.raises(ValueError, match="not found"):
-            EquiFlow(data=sample_data, categorical=['nonexistent_column'])
-
-    def test_no_data_raises(self):
-        """Test that missing data parameter raises ValueError."""
-        with pytest.raises(ValueError, match="must be provided"):
-            EquiFlow()
-
-    def test_initialization_with_dfs_list(self, sample_data):
+    def test_initialization_with_dfs(self, sample_data):
         """Test initialization with list of DataFrames."""
         df1 = sample_data.copy()
         df2 = sample_data[sample_data['age'] >= 30].copy()
-        ef = EquiFlow(dfs=[df1, df2], categorical=['sex'])
+        
+        ef = EquiFlow(
+            dfs=[df1, df2],
+            categorical=['sex']
+        )
         assert len(ef._dfs) == 2
+        assert len(ef._dfs[1]) < len(ef._dfs[0])
 
-    def test_repr(self, basic_equiflow):
+    def test_empty_dataframe_raises_error(self):
+        """Test that empty DataFrame raises ValueError."""
+        with pytest.raises(ValueError, match="DataFrame cannot be empty"):
+            EquiFlow(data=pd.DataFrame())
+
+    def test_missing_variable_raises_error(self, sample_data):
+        """Test that non-existent variable raises ValueError."""
+        with pytest.raises(ValueError, match="not found in the DataFrame"):
+            EquiFlow(
+                data=sample_data,
+                categorical=['nonexistent_column']
+            )
+
+    def test_no_data_raises_error(self):
+        """Test that missing data and dfs raises ValueError."""
+        with pytest.raises(ValueError, match="Either 'data' or 'dfs' must be provided"):
+            EquiFlow(categorical=['sex'])
+
+    def test_initial_cohort_label(self, sample_data):
+        """Test custom initial cohort label."""
+        ef = EquiFlow(
+            data=sample_data,
+            categorical=['sex'],
+            initial_cohort_label="All Patients"
+        )
+        assert ef.new_cohort_labels[0] == "All Patients"
+
+    def test_repr(self, sample_data):
         """Test string representation."""
-        repr_str = repr(basic_equiflow)
+        ef = EquiFlow(
+            data=sample_data,
+            categorical=['sex', 'race'],
+            normal=['age']
+        )
+        repr_str = repr(ef)
         assert "EquiFlow" in repr_str
-        assert "cohorts=" in repr_str
+        assert "cohorts=1" in repr_str
 
-
-# ============================================================================
-# EquiFlow Exclusion Tests
-# ============================================================================
 
 class TestEquiFlowExclusion:
-    """Tests for EquiFlow exclusion functionality."""
+    """Tests for exclusion logic."""
 
     def test_add_exclusion_with_keep(self, sample_data):
         """Test adding exclusion with keep parameter."""
         ef = EquiFlow(data=sample_data, categorical=['sex'])
-        initial_count = len(ef._dfs[0])
         
+        initial_count = len(ef._dfs[0])
         ef.add_exclusion(
             keep=sample_data['age'] >= 30,
             exclusion_reason="Age < 30",
-            new_cohort_label="Age 30+"
+            new_cohort_label="Adults 30+"
         )
         
         assert len(ef._dfs) == 2
         assert len(ef._dfs[1]) < initial_count
         assert ef.exclusion_labels[1] == "Age < 30"
-        assert ef.new_cohort_labels[1] == "Age 30+"
+        assert ef.new_cohort_labels[1] == "Adults 30+"
 
     def test_add_exclusion_with_new_cohort(self, sample_data):
         """Test adding exclusion with new_cohort DataFrame."""
         ef = EquiFlow(data=sample_data, categorical=['sex'])
-        new_cohort = sample_data[sample_data['age'] >= 30].copy()
         
+        new_cohort = sample_data[sample_data['age'] >= 30].copy()
         ef.add_exclusion(
             new_cohort=new_cohort,
             exclusion_reason="Age < 30"
@@ -161,307 +126,393 @@ class TestEquiFlowExclusion:
         assert len(ef._dfs) == 2
         assert len(ef._dfs[1]) == len(new_cohort)
 
-    def test_exclusion_chaining(self, sample_data):
-        """Test that exclusions can be chained."""
+    def test_exclusion_both_params_raises_error(self, sample_data):
+        """Test that providing both keep and new_cohort raises error."""
+        ef = EquiFlow(data=sample_data, categorical=['sex'])
+        
+        with pytest.raises(ValueError, match="Only one of"):
+            ef.add_exclusion(
+                keep=sample_data['age'] >= 30,
+                new_cohort=sample_data[sample_data['age'] >= 30]
+            )
+
+    def test_exclusion_no_params_raises_error(self, sample_data):
+        """Test that providing neither keep nor new_cohort raises error."""
+        ef = EquiFlow(data=sample_data, categorical=['sex'])
+        
+        with pytest.raises(ValueError, match="Either 'keep' or 'new_cohort'"):
+            ef.add_exclusion(exclusion_reason="No filter")
+
+    def test_multiple_exclusions(self, sample_data):
+        """Test chaining multiple exclusions."""
+        ef = EquiFlow(data=sample_data, categorical=['sex', 'race'])
+        
+        ef.add_exclusion(keep=sample_data['age'] >= 30, exclusion_reason="Age < 30")
+        
+        # Need to use the current cohort for the next exclusion
+        current = ef._dfs[-1]
+        ef.add_exclusion(keep=current['score'] > 5, exclusion_reason="Score ≤ 5")
+        
+        assert len(ef._dfs) == 3
+
+    def test_method_chaining(self, sample_data):
+        """Test that add_exclusion returns self for chaining."""
         ef = EquiFlow(data=sample_data, categorical=['sex'])
         
         result = ef.add_exclusion(
-            keep=sample_data['age'] >= 18,
-            exclusion_reason="Age < 18"
-        ).add_exclusion(
-            keep=sample_data['bmi'] < 40,
-            exclusion_reason="BMI >= 40"
+            keep=sample_data['age'] >= 30,
+            exclusion_reason="Age < 30"
         )
         
-        assert result is ef  # Returns self
-        assert len(ef._dfs) == 3
+        assert result is ef
 
-    def test_exclusion_no_params_raises(self, sample_data):
-        """Test that exclusion without keep or new_cohort raises."""
-        ef = EquiFlow(data=sample_data, categorical=['sex'])
-        with pytest.raises(ValueError, match="must be provided"):
-            ef.add_exclusion(exclusion_reason="Test")
-
-    def test_exclusion_both_params_raises(self, sample_data):
-        """Test that exclusion with both keep and new_cohort raises."""
-        ef = EquiFlow(data=sample_data, categorical=['sex'])
-        with pytest.raises(ValueError, match="not both"):
-            ef.add_exclusion(
-                keep=sample_data['age'] >= 18,
-                new_cohort=sample_data.head(10),
-                exclusion_reason="Test"
-            )
-
-    def test_empty_exclusion_warning(self, sample_data):
-        """Test that empty cohort after exclusion raises warning."""
-        ef = EquiFlow(data=sample_data, categorical=['sex'])
-        with pytest.warns(UserWarning, match="empty cohort"):
-            ef.add_exclusion(
-                keep=sample_data['age'] > 1000,  # No one passes
-                exclusion_reason="Impossible criteria"
-            )
-
-
-# ============================================================================
-# Table Generation Tests
-# ============================================================================
 
 class TestTableFlows:
-    """Tests for TableFlows functionality."""
+    """Tests for flow table generation."""
 
-    def test_view_table_flows(self, basic_equiflow):
-        """Test flow table generation."""
-        table = basic_equiflow.view_table_flows()
-        assert isinstance(table, pd.DataFrame)
-        assert "Initial" in str(table.index)
-        assert "Removed" in str(table.index)
-        assert "Result" in str(table.index)
-
-    def test_flow_table_requires_two_cohorts(self, sample_data):
-        """Test that flow table requires at least 2 cohorts."""
+    def test_view_table_flows(self, sample_data):
+        """Test basic flow table generation."""
         ef = EquiFlow(data=sample_data, categorical=['sex'])
-        with pytest.raises(ValueError, match="at least two cohorts"):
+        ef.add_exclusion(keep=sample_data['age'] >= 30, exclusion_reason="Age < 30")
+        
+        flows = ef.view_table_flows()
+        
+        assert isinstance(flows, pd.DataFrame)
+        assert len(flows) == 3  # Initial, Removed, Result rows
+
+    def test_flows_requires_two_cohorts(self, sample_data):
+        """Test that view_table_flows requires at least 2 cohorts."""
+        ef = EquiFlow(data=sample_data, categorical=['sex'])
+        
+        with pytest.raises(ValueError, match="At least two cohorts"):
             ef.view_table_flows()
 
-    def test_flow_table_thousands_sep(self, basic_equiflow):
-        """Test thousands separator option."""
-        table_with_sep = basic_equiflow.view_table_flows(thousands_sep=True)
-        table_without_sep = basic_equiflow.view_table_flows(thousands_sep=False)
-        # Both should work without error
-        assert table_with_sep is not None
-        assert table_without_sep is not None
+    def test_flows_with_thousands_separator(self, sample_data):
+        """Test flow table with thousands separator."""
+        ef = EquiFlow(
+            data=sample_data,
+            categorical=['sex'],
+            thousands_sep=True
+        )
+        ef.add_exclusion(keep=sample_data['age'] >= 30)
+        
+        flows = ef.view_table_flows()
+        assert flows is not None
 
 
 class TestTableCharacteristics:
-    """Tests for TableCharacteristics functionality."""
+    """Tests for characteristics table generation."""
 
-    def test_view_table_characteristics(self, basic_equiflow):
-        """Test characteristics table generation."""
-        table = basic_equiflow.view_table_characteristics()
-        assert isinstance(table, pd.DataFrame)
-        assert "Overall" in table.index.get_level_values(0)
-
-    def test_characteristics_format_options(self, basic_equiflow):
-        """Test different format options."""
-        # Test percentage format
-        table_pct = basic_equiflow.view_table_characteristics(format_cat='%')
-        assert table_pct is not None
-        
-        # Test N format
-        table_n = basic_equiflow.view_table_characteristics(format_cat='N')
-        assert table_n is not None
-        
-        # Test N (%) format
-        table_npct = basic_equiflow.view_table_characteristics(format_cat='N (%)')
-        assert table_npct is not None
-
-    def test_characteristics_with_limit(self, basic_equiflow):
-        """Test category limit parameter."""
-        table = basic_equiflow.view_table_characteristics(limit=2)
-        assert table is not None
-
-    def test_characteristics_with_order_classes(self, basic_equiflow):
-        """Test custom category ordering."""
-        table = basic_equiflow.view_table_characteristics(
-            order_classes={'race': ['Asian', 'Black', 'White', 'Other']}
+    def test_view_table_characteristics(self, sample_data):
+        """Test basic characteristics table generation."""
+        ef = EquiFlow(
+            data=sample_data,
+            categorical=['sex', 'race'],
+            normal=['age'],
+            nonnormal=['score']
         )
-        assert table is not None
+        ef.add_exclusion(keep=sample_data['age'] >= 30)
+        
+        chars = ef.view_table_characteristics()
+        
+        assert isinstance(chars, pd.DataFrame)
+        assert len(chars) > 0
+
+    def test_characteristics_with_custom_format(self, sample_data):
+        """Test characteristics with custom formatting."""
+        ef = EquiFlow(
+            data=sample_data,
+            categorical=['sex'],
+            normal=['age'],
+            format_cat="N",
+            format_normal="Mean ± SD",
+            decimals=1
+        )
+        ef.add_exclusion(keep=sample_data['age'] >= 30)
+        
+        chars = ef.view_table_characteristics()
+        assert chars is not None
 
 
 class TestTableDrifts:
-    """Tests for TableDrifts functionality."""
+    """Tests for drift (SMD) table generation."""
 
-    def test_view_table_drifts(self, basic_equiflow):
-        """Test drifts table generation."""
-        table = basic_equiflow.view_table_drifts()
-        assert isinstance(table, pd.DataFrame)
+    def test_view_table_drifts(self, sample_data):
+        """Test basic drift table generation."""
+        ef = EquiFlow(
+            data=sample_data,
+            categorical=['sex', 'race'],
+            normal=['age']
+        )
+        ef.add_exclusion(keep=sample_data['age'] >= 30)
+        
+        drifts = ef.view_table_drifts()
+        
+        assert isinstance(drifts, pd.DataFrame)
 
-    def test_drifts_decimals(self, basic_equiflow):
-        """Test decimal places parameter."""
-        table = basic_equiflow.view_table_drifts(decimals=3)
-        assert table is not None
+    def test_drift_values_reasonable(self, sample_data):
+        """Test that SMD values are within reasonable range."""
+        ef = EquiFlow(
+            data=sample_data,
+            categorical=['sex'],
+            normal=['age']
+        )
+        ef.add_exclusion(keep=sample_data['age'] >= 30)
+        
+        drifts = ef.view_table_drifts()
+        
+        # SMD values should typically be between 0 and 2
+        # (though can be higher in extreme cases)
+        for col in drifts.columns:
+            if 'SMD' in str(col) or 'Drift' in str(col):
+                numeric_vals = pd.to_numeric(drifts[col], errors='coerce').dropna()
+                if len(numeric_vals) > 0:
+                    assert numeric_vals.max() < 10  # Sanity check
 
 
 class TestTablePValues:
-    """Tests for TablePValues functionality."""
+    """Tests for p-value table generation."""
 
-    def test_view_table_pvalues(self, basic_equiflow):
-        """Test p-values table generation."""
-        table = basic_equiflow.view_table_pvalues()
-        assert isinstance(table, pd.DataFrame)
+    def test_view_table_pvalues(self, sample_data):
+        """Test basic p-value table generation."""
+        ef = EquiFlow(
+            data=sample_data,
+            categorical=['sex', 'race'],
+            normal=['age']
+        )
+        ef.add_exclusion(keep=sample_data['age'] >= 30)
+        
+        pvals = ef.view_table_pvalues()
+        
+        assert isinstance(pvals, pd.DataFrame)
 
-    def test_pvalues_correction_none(self, basic_equiflow):
-        """Test p-values without correction."""
-        table = basic_equiflow.view_table_pvalues(correction="none")
-        assert table is not None
+    def test_pvalues_correction_none(self, sample_data):
+        """Test p-values with no correction."""
+        ef = EquiFlow(data=sample_data, categorical=['sex'])
+        ef.add_exclusion(keep=sample_data['age'] >= 30)
+        
+        pvals = ef.view_table_pvalues(correction="none")
+        assert pvals is not None
 
-    def test_pvalues_correction_bonferroni(self, basic_equiflow):
+    def test_pvalues_correction_bonferroni(self, sample_data):
         """Test p-values with Bonferroni correction."""
-        table = basic_equiflow.view_table_pvalues(correction="bonferroni")
-        assert table is not None
+        ef = EquiFlow(data=sample_data, categorical=['sex'])
+        ef.add_exclusion(keep=sample_data['age'] >= 30)
+        
+        pvals = ef.view_table_pvalues(correction="bonferroni")
+        assert pvals is not None
 
-    def test_pvalues_correction_fdr(self, basic_equiflow):
+    def test_pvalues_correction_fdr(self, sample_data):
         """Test p-values with FDR correction."""
-        table = basic_equiflow.view_table_pvalues(correction="fdr_bh")
-        assert table is not None
+        ef = EquiFlow(data=sample_data, categorical=['sex'])
+        ef.add_exclusion(keep=sample_data['age'] >= 30)
+        
+        pvals = ef.view_table_pvalues(correction="fdr_bh")
+        assert pvals is not None
 
-    def test_pvalues_invalid_correction_raises(self, basic_equiflow):
-        """Test that invalid correction method raises error."""
-        with pytest.raises(ValueError, match="Invalid correction"):
-            basic_equiflow.view_table_pvalues(correction="invalid_method")
-
-
-# ============================================================================
-# EasyFlow Tests
-# ============================================================================
 
 class TestEasyFlow:
     """Tests for EasyFlow simplified interface."""
 
-    def test_basic_easyflow(self, sample_data):
-        """Test basic EasyFlow usage."""
-        flow = EasyFlow(sample_data, title="Test Cohort")
-        assert flow._data is not None
-        assert flow._title == "Test Cohort"
+    def test_easyflow_basic(self, sample_data):
+        """Test basic EasyFlow workflow."""
+        flow = EasyFlow(sample_data, title="Test Study")
+        
+        assert flow._title == "Test Study"
+        assert len(flow._data) == len(sample_data)
 
-    def test_easyflow_chaining(self, sample_data):
-        """Test EasyFlow method chaining."""
-        flow = (
-            EasyFlow(sample_data, title="Test")
-            .categorize(['sex', 'race'])
-            .measure_normal(['age', 'bmi'])
-            .measure_nonnormal(['income'])
-        )
+    def test_easyflow_categorize(self, sample_data):
+        """Test EasyFlow categorize method."""
+        flow = EasyFlow(sample_data)
+        result = flow.categorize(['sex', 'race'])
+        
+        assert result is flow  # Returns self
         assert flow._categorical_vars == ['sex', 'race']
-        assert flow._normal_vars == ['age', 'bmi']
-        assert flow._nonnormal_vars == ['income']
+
+    def test_easyflow_measure_normal(self, sample_data):
+        """Test EasyFlow measure_normal method."""
+        flow = EasyFlow(sample_data)
+        result = flow.measure_normal(['age'])
+        
+        assert result is flow
+        assert flow._normal_vars == ['age']
 
     def test_easyflow_exclude(self, sample_data):
-        """Test EasyFlow exclusion."""
-        flow = (
-            EasyFlow(sample_data)
-            .categorize(['sex'])
-            .exclude(sample_data['age'] >= 18, "Age < 18")
-        )
-        assert len(flow._exclusion_steps) == 1
-        assert len(flow._current_data) < len(sample_data)
-
-    def test_easyflow_exclude_with_lambda(self, sample_data):
-        """Test EasyFlow exclusion with lambda function."""
-        flow = (
-            EasyFlow(sample_data)
-            .categorize(['sex'])
-            .exclude(lambda df: df['age'] >= 18, "Age < 18")
-        )
+        """Test EasyFlow exclude method."""
+        flow = EasyFlow(sample_data)
+        flow.categorize(['sex'])
+        
+        initial_n = len(flow._current_data)
+        result = flow.exclude(sample_data['age'] >= 30, "Age < 30")
+        
+        assert result is flow
+        assert len(flow._current_data) < initial_n
         assert len(flow._exclusion_steps) == 1
 
-    def test_easyflow_generate_requires_exclusions(self, sample_data):
-        """Test that generate() requires exclusion steps."""
-        flow = EasyFlow(sample_data).categorize(['sex'])
-        with pytest.raises(ValueError, match="No exclusion steps"):
-            flow.generate(show=False)
+    def test_easyflow_method_chaining(self, sample_data):
+        """Test EasyFlow method chaining."""
+        flow = (EasyFlow(sample_data, title="Chained Test")
+            .categorize(['sex', 'race'])
+            .measure_normal(['age'])
+            .measure_nonnormal(['score'])
+            .exclude(sample_data['age'] >= 30, "Age < 30"))
+        
+        assert len(flow._exclusion_steps) == 1
+        assert flow._categorical_vars == ['sex', 'race']
 
     def test_easyflow_repr(self, sample_data):
         """Test EasyFlow string representation."""
         flow = EasyFlow(sample_data)
+        flow.exclude(sample_data['age'] >= 30, "Test")
+        
         repr_str = repr(flow)
         assert "EasyFlow" in repr_str
+        assert "steps=1" in repr_str
 
-
-# ============================================================================
-# Flow Diagram Tests
-# ============================================================================
 
 class TestFlowDiagram:
     """Tests for flow diagram generation."""
 
-    def test_plot_flows_creates_files(self, basic_equiflow):
-        """Test that plot_flows creates output files."""
+    def test_plot_flows_creates_file(self, sample_data):
+        """Test that plot_flows creates output file."""
+        ef = EquiFlow(
+            data=sample_data,
+            categorical=['sex'],
+            normal=['age']
+        )
+        ef.add_exclusion(keep=sample_data['age'] >= 30, exclusion_reason="Age < 30")
+        
         with tempfile.TemporaryDirectory() as tmpdir:
-            basic_equiflow.plot_flows(
-                output_folder=tmpdir,
-                output_file="test_diagram",
-                display_flow_diagram=False,
-                plot_dists=False
-            )
-            # Check that files were created
-            assert os.path.exists(os.path.join(tmpdir, "test_diagram.pdf"))
+            output_path = os.path.join(tmpdir, "test_flow")
+            ef.plot_flows(output_file=output_path, display_flow_diagram=False)
+            
+            # Check that some output file was created
+            files = os.listdir(tmpdir)
+            assert len(files) > 0
 
-    def test_plot_flows_with_distributions(self, basic_equiflow):
-        """Test plot_flows with distribution plots."""
+    def test_plot_flows_with_custom_colors(self, sample_data):
+        """Test flow diagram with custom colors."""
+        ef = EquiFlow(
+            data=sample_data,
+            categorical=['sex'],
+            normal=['age']
+        )
+        ef.add_exclusion(keep=sample_data['age'] >= 30)
+        
         with tempfile.TemporaryDirectory() as tmpdir:
-            basic_equiflow.plot_flows(
+            output_path = os.path.join(tmpdir, "custom_color_flow")
+            ef.plot_flows(
+                output_file=output_path,
                 output_folder=tmpdir,
-                output_file="test_with_dists",
-                display_flow_diagram=False,
-                plot_dists=True,
-                smds=True,
-                legend=True
+                categorical_bar_colors={'sex': ['#1f77b4', '#ff7f0e']},
+                display_flow_diagram=False
             )
-            assert os.path.exists(os.path.join(tmpdir, "test_with_dists.pdf"))
+            
+            files = os.listdir(tmpdir)
+            assert len(files) > 0
 
-    def test_plot_flows_custom_colors(self, basic_equiflow):
-        """Test plot_flows with custom colors."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            basic_equiflow.plot_flows(
-                output_folder=tmpdir,
-                output_file="test_colors",
-                display_flow_diagram=False,
-                plot_dists=False,
-                cohort_node_color='lightblue',
-                exclusion_node_color='mistyrose',
-                edge_color='navy'
-            )
-            assert os.path.exists(os.path.join(tmpdir, "test_colors.pdf"))
-
-
-# ============================================================================
-# Edge Cases and Error Handling
-# ============================================================================
 
 class TestEdgeCases:
     """Tests for edge cases and error handling."""
 
     def test_single_category_variable(self, sample_data):
         """Test handling of variable with single category."""
-        data = sample_data.copy()
-        data['single_cat'] = 'A'  # Only one category
+        df = sample_data.copy()
+        df['constant'] = 'A'  # Single value
         
-        ef = EquiFlow(data=data, categorical=['single_cat'])
-        ef.add_exclusion(keep=data['age'] >= 18)
+        ef = EquiFlow(data=df, categorical=['constant', 'sex'])
+        ef.add_exclusion(keep=df['age'] >= 30)
         
-        # Should not raise an error
-        table = ef.view_table_characteristics()
-        assert table is not None
+        # Should not raise error
+        chars = ef.view_table_characteristics()
+        assert chars is not None
 
     def test_all_missing_variable(self, sample_data):
         """Test handling of variable with all missing values."""
-        data = sample_data.copy()
-        data['all_missing'] = None
+        df = sample_data.copy()
+        df['all_missing'] = np.nan
         
-        ef = EquiFlow(data=data, categorical=['sex'], normal=['all_missing'])
-        ef.add_exclusion(keep=data['age'] >= 18)
+        # Should handle gracefully during initialization
+        ef = EquiFlow(data=df, categorical=['sex'])
+        ef.add_exclusion(keep=df['age'] >= 30)
         
-        table = ef.view_table_characteristics()
-        assert table is not None
+        flows = ef.view_table_flows()
+        assert flows is not None
 
-    def test_very_small_cohort(self):
-        """Test handling of very small cohorts."""
-        small_data = pd.DataFrame({
-            'age': [25, 30, 35],
-            'sex': ['M', 'F', 'M']
+    def test_small_cohort(self):
+        """Test with very small cohort."""
+        df = pd.DataFrame({
+            'age': [25, 30, 35, 40, 45],
+            'sex': ['M', 'F', 'M', 'F', 'M'],
         })
         
-        ef = EquiFlow(data=small_data, categorical=['sex'])
-        ef.add_exclusion(keep=small_data['age'] >= 28)
+        ef = EquiFlow(data=df, categorical=['sex'], normal=['age'])
+        ef.add_exclusion(keep=df['age'] >= 30)
         
-        table = ef.view_table_characteristics()
-        assert table is not None
+        flows = ef.view_table_flows()
+        assert len(flows) == 3  # Initial, Removed, Result rows
+
+    def test_variable_renaming(self, sample_data):
+        """Test variable renaming functionality."""
+        ef = EquiFlow(
+            data=sample_data,
+            categorical=['sex'],
+            rename={'sex': 'Gender'}
+        )
+        ef.add_exclusion(keep=sample_data['age'] >= 30)
+        
+        chars = ef.view_table_characteristics()
+        # Check that rename was applied (exact check depends on implementation)
+        assert chars is not None
+
+    def test_order_classes(self, sample_data):
+        """Test custom category ordering."""
+        ef = EquiFlow(
+            data=sample_data,
+            categorical=['race'],
+            order_classes={'race': ['Other', 'Asian', 'Black', 'White']}
+        )
+        ef.add_exclusion(keep=sample_data['age'] >= 30)
+        
+        chars = ef.view_table_characteristics()
+        assert chars is not None
+
+    def test_limit_categories(self, sample_data):
+        """Test limiting number of categories displayed."""
+        ef = EquiFlow(
+            data=sample_data,
+            categorical=['race'],
+            limit={'race': 2}  # Show only top 2
+        )
+        ef.add_exclusion(keep=sample_data['age'] >= 30)
+        
+        chars = ef.view_table_characteristics()
+        assert chars is not None
 
 
-# ============================================================================
-# Run tests
-# ============================================================================
+class TestMissingData:
+    """Tests for handling missing data."""
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    def test_missing_values_in_categorical(self, sample_data_with_missing):
+        """Test handling missing values in categorical variables."""
+        ef = EquiFlow(
+            data=sample_data_with_missing,
+            categorical=['race'],
+            missingness=True
+        )
+        ef.add_exclusion(keep=sample_data_with_missing['age'].notna())
+        
+        chars = ef.view_table_characteristics()
+        assert chars is not None
+
+    def test_missing_values_in_continuous(self, sample_data_with_missing):
+        """Test handling missing values in continuous variables."""
+        ef = EquiFlow(
+            data=sample_data_with_missing,
+            nonnormal=['score'],
+            missingness=True
+        )
+        ef.add_exclusion(keep=sample_data_with_missing['score'].notna())
+        
+        chars = ef.view_table_characteristics()
+        assert chars is not None

@@ -1,13 +1,20 @@
-# -- Project information
+# Configuration file for the Sphinx documentation builder.
+#
+# For the full list of built-in configuration values, see the documentation:
+# https://www.sphinx-doc.org/en/master/usage/configuration.html
+
+# -- Project information -----------------------------------------------------
+# https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = 'equiflow'
 copyright = '2024, João Matos'
-author = 'João Matos, Pedro Moreira, Jacob Ellen'
+author = 'João Matos'
 
 release = '0.1.7'
 version = '0.1.7'
 
-# -- General configuration
+# -- General configuration ---------------------------------------------------
+# https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
 extensions = [
     'sphinx.ext.duration',
@@ -32,10 +39,10 @@ autoapi_dirs = ['../equiflow']
 autoapi_generate_api_docs = True
 autoapi_options = ['members', 'undoc-members', 'special-members', ]
 
-# -- Options for HTML output
+# -- Options for HTML output -------------------------------------------------
+# https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = 'furo'
-# html_theme = "pydata_sphinx_theme"
 
 html_theme_options = {
     "icon_links": [
@@ -51,7 +58,6 @@ html_theme_options = {
     "secondary_sidebar_items": ["page-toc"],
     "show_toc_level": 5,
     "show_prev_next": False,
-
 }
 
 html_context = {
@@ -61,5 +67,5 @@ html_context = {
     "doc_path": "docs",
 }
 
-# -- Options for EPUB output
+# -- Options for EPUB output -------------------------------------------------
 epub_show_urls = 'footnote'
