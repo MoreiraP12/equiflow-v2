@@ -374,8 +374,6 @@ class EquiFlow:
             
             self._dfs[i] = df_cleaned
 
-    # Fixed add_exclusion method with mask deprecation warning
-# Copy this to replace the add_exclusion method in equiflow/equiflow.py (around line 295)
 
 def add_exclusion(
     self,
