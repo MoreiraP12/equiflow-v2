@@ -374,101 +374,99 @@ class EquiFlow:
             
             self._dfs[i] = df_cleaned
 
-
-def add_exclusion(
-    self,
-    keep: Optional[pd.Series] = None,
-    new_cohort: Optional[pd.DataFrame] = None,
-    exclusion_reason: Optional[str] = None,
-    new_cohort_label: Optional[str] = None,
-    mask: Optional[pd.Series] = None,  # Deprecated parameter
-) -> 'EquiFlow':
-    """
-    Add an exclusion step to the cohort flow.
-    
-    Parameters
-    ----------
-    keep : pd.Series of bool, optional
-        Boolean mask where True indicates rows to KEEP (retain).
-        Rows where keep=False will be excluded.
-        Either `keep` or `new_cohort` must be provided, but not both.
-    new_cohort : pd.DataFrame, optional
-        DataFrame representing the new cohort after exclusion.
-        Either `keep` or `new_cohort` must be provided, but not both.
-    exclusion_reason : str, optional
-        Description of why rows were excluded.
-    new_cohort_label : str, optional
-        Label for the resulting cohort.
-    mask : pd.Series of bool, optional
-        .. deprecated:: 0.1.7
-            Use `keep` instead. The `mask` parameter will be removed in v0.2.0.
+    def add_exclusion(
+        self,
+        keep: Optional[pd.Series] = None,
+        new_cohort: Optional[pd.DataFrame] = None,
+        exclusion_reason: Optional[str] = None,
+        new_cohort_label: Optional[str] = None,
+        mask: Optional[pd.Series] = None,  # Deprecated parameter
+    ) -> 'EquiFlow':
+        """
+        Add an exclusion step to the cohort flow.
         
-    Returns
-    -------
-    EquiFlow
-        Self, for method chaining.
-        
-    Examples
-    --------
-    >>> # Keep patients 18 and older (exclude those under 18)
-    >>> ef.add_exclusion(
-    ...     keep=df['age'] >= 18,
-    ...     exclusion_reason="Age < 18",
-    ...     new_cohort_label="Adult cohort"
-    ... )
-    """
-    # Handle deprecated 'mask' parameter
-    if mask is not None:
-        warnings.warn(
-            "The 'mask' parameter is deprecated and will be removed in v0.2.0. "
-            "Use 'keep' instead. Both parameters have the same behavior: "
-            "rows where the value is True are kept (retained).",
-            DeprecationWarning,
-            stacklevel=2
-        )
-        if keep is not None:
-            raise ValueError(
-                "Cannot specify both 'keep' and 'mask'. "
-                "The 'mask' parameter is deprecated; use 'keep' instead."
+        Parameters
+        ----------
+        keep : pd.Series of bool, optional
+            Boolean mask where True indicates rows to KEEP (retain).
+            Rows where keep=False will be excluded.
+            Either `keep` or `new_cohort` must be provided, but not both.
+        new_cohort : pd.DataFrame, optional
+            DataFrame representing the new cohort after exclusion.
+            Either `keep` or `new_cohort` must be provided, but not both.
+        exclusion_reason : str, optional
+            Description of why rows were excluded.
+        new_cohort_label : str, optional
+            Label for the resulting cohort.
+        mask : pd.Series of bool, optional
+            .. deprecated:: 0.1.7
+                Use `keep` instead. The `mask` parameter will be removed in v0.2.0.
+            
+        Returns
+        -------
+        EquiFlow
+            Self, for method chaining.
+            
+        Examples
+        --------
+        >>> # Keep patients 18 and older (exclude those under 18)
+        >>> ef.add_exclusion(
+        ...     keep=df['age'] >= 18,
+        ...     exclusion_reason="Age < 18",
+        ...     new_cohort_label="Adult cohort"
+        ... )
+        """
+        # Handle deprecated 'mask' parameter
+        if mask is not None:
+            warnings.warn(
+                "The 'mask' parameter is deprecated and will be removed in v0.2.0. "
+                "Use 'keep' instead. Both parameters have the same behavior: "
+                "rows where the value is True are kept (retained).",
+                DeprecationWarning,
+                stacklevel=2
             )
-        keep = mask
-    
-    if keep is None and new_cohort is None:
-        raise ValueError("Either 'keep' or 'new_cohort' must be provided")
-    if keep is not None and new_cohort is not None:
-        raise ValueError("Only one of 'keep' or 'new_cohort' can be provided, not both")
-    
-    if keep is not None:
-        # KEEP rows where keep is True
-        new_df = self._dfs[-1].loc[keep].copy()
-    else:
-        new_df = new_cohort.copy()
-    
-    # Warn if the resulting cohort is empty
-    if new_df.empty:
-        warnings.warn(
-            f"Exclusion step '{exclusion_reason or 'unnamed'}' resulted in an empty cohort. "
-            "This may cause issues with downstream calculations.",
-            UserWarning
-        )
-    
-    self._dfs.append(new_df)
-    
-    # Set labels
-    step_idx = len(self._dfs) - 1
-    if exclusion_reason is not None:
-        self.exclusion_labels[step_idx] = exclusion_reason
-    else:
-        self.exclusion_labels[step_idx] = f"Exclusion {step_idx}"
-    
-    if new_cohort_label is not None:
-        self.new_cohort_labels[step_idx] = new_cohort_label
-    else:
-        self.new_cohort_labels[step_idx] = f"Cohort {step_idx}"
-    
-    return self
+            if keep is not None:
+                raise ValueError(
+                    "Cannot specify both 'keep' and 'mask'. "
+                    "The 'mask' parameter is deprecated; use 'keep' instead."
+                )
+            keep = mask
+        
+        if keep is None and new_cohort is None:
+            raise ValueError("Either 'keep' or 'new_cohort' must be provided")
+        if keep is not None and new_cohort is not None:
+            raise ValueError("Only one of 'keep' or 'new_cohort' can be provided, not both")
+        
+        if keep is not None:
+            # KEEP rows where keep is True
+            new_df = self._dfs[-1].loc[keep].copy()
+        else:
+            new_df = new_cohort.copy()
+        
+        # Warn if the resulting cohort is empty
+        if new_df.empty:
+            warnings.warn(
+                f"Exclusion step '{exclusion_reason or 'unnamed'}' resulted in an empty cohort. "
+                "This may cause issues with downstream calculations.",
+                UserWarning
+            )
+        
+        self._dfs.append(new_df)
+        
+        # Set labels
+        step_idx = len(self._dfs) - 1
+        if exclusion_reason is not None:
+            self.exclusion_labels[step_idx] = exclusion_reason
+        else:
+            self.exclusion_labels[step_idx] = f"Exclusion {step_idx}"
+        
+        if new_cohort_label is not None:
+            self.new_cohort_labels[step_idx] = new_cohort_label
+        else:
+            self.new_cohort_labels[step_idx] = f"Cohort {step_idx}"
+        
+        return self
 
-    
     def view_table_flows(
         self,
         label_suffix: Optional[bool] = None,
