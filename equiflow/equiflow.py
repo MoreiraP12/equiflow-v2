@@ -36,6 +36,29 @@ __all__ = [
 
 # Utility Functions
 
+def _safe_scalar(value: Any) -> Any:
+    """
+    Safely extract a scalar value from a pandas lookup result.
+    
+    When using .loc[] on a MultiIndex DataFrame, pandas may return a Series
+    instead of a scalar if the index isn't properly lexsorted. This function
+    ensures we always get a scalar value.
+    
+    Parameters
+    ----------
+    value : Any
+        The value returned from a .loc[] lookup.
+        
+    Returns
+    -------
+    Any
+        A scalar value.
+    """
+    if isinstance(value, pd.Series):
+        return value.iloc[0] if len(value) > 0 else value
+    return value
+
+
 def format_smd(smd_value: Any, decimals: int = 2) -> str:
     """
     Format SMD value with specified decimal places.
@@ -2270,7 +2293,7 @@ class FlowDiagram:
                 percs = {}
                 for v in vals:
                     try:
-                        val = table.loc[(var, v), ("Cohort", 0)]
+                        val = _safe_scalar(table.loc[(var, v), ("Cohort", 0)])
                         if isinstance(val, str):
                             val = (
                                 float(val.replace("%", "").split("(")[-1].replace(")", ""))
@@ -2316,7 +2339,7 @@ class FlowDiagram:
                     cum = 0
                     
                     for vi, val in enumerate(vals):
-                        value = table.loc[(var, val), ("Cohort", coh)]
+                        value = _safe_scalar(table.loc[(var, val), ("Cohort", coh)])
                         if isinstance(value, str):
                             try:
                                 value = (
@@ -2401,7 +2424,7 @@ class FlowDiagram:
                             table.index.get_level_values(0) == var
                         ].index.get_level_values(1)
                     ):
-                        mv = table.loc[(var, "Missing"), ("Cohort", coh)]
+                        mv = _safe_scalar(table.loc[(var, "Missing"), ("Cohort", coh)])
                         if isinstance(mv, str):
                             try:
                                 mv = (
@@ -2438,7 +2461,7 @@ class FlowDiagram:
                     # Add SMD
                     if coh > 0 and self._smds and table_smds is not None:
                         if orig_var in table_smds.index:
-                            smd = table_smds.loc[orig_var, f"{coh-1} to {coh}"]
+                            smd = _safe_scalar(table_smds.loc[orig_var, f"{coh-1} to {coh}"])
                             ax.text(
                                 -3, v,
                                 self._format_smd_value(smd),
@@ -2452,7 +2475,7 @@ class FlowDiagram:
                         vr = self._table_characteristics._rename.get(var_original, var_original)
                         try:
                             if (vr, " ") in table_pvals.index:
-                                pv = table_pvals.loc[(vr, " "), ("p-value", f"{coh-1} to {coh}")]
+                                pv = _safe_scalar(table_pvals.loc[(vr, " "), ("p-value", f"{coh-1} to {coh}")])
                                 ax.text(
                                     -18 if self._smds else -3, v,
                                     self._format_pvalue_value(pv),
@@ -2464,7 +2487,7 @@ class FlowDiagram:
                             pass
                 else:
                     # Continuous variable
-                    value = table.loc[(var, " "), ("Cohort", coh)]
+                    value = _safe_scalar(table.loc[(var, " "), ("Cohort", coh)])
                     ax.barh(
                         v, 100, left=0, height=bar_height,
                         color=self._continuous_var_color,
@@ -2482,7 +2505,7 @@ class FlowDiagram:
                     # Add SMD
                     if coh > 0 and self._smds and table_smds is not None:
                         if orig_var in table_smds.index:
-                            smd = table_smds.loc[orig_var, f"{coh-1} to {coh}"]
+                            smd = _safe_scalar(table_smds.loc[orig_var, f"{coh-1} to {coh}"])
                             ax.text(
                                 -3, v,
                                 self._format_smd_value(smd),
@@ -2496,7 +2519,7 @@ class FlowDiagram:
                         vr = self._table_characteristics._rename.get(var_original, var_original)
                         try:
                             if (vr, " ") in table_pvals.index:
-                                pv = table_pvals.loc[(vr, " "), ("p-value", f"{coh-1} to {coh}")]
+                                pv = _safe_scalar(table_pvals.loc[(vr, " "), ("p-value", f"{coh-1} to {coh}")])
                                 ax.text(
                                     -18 if self._smds else -3, v,
                                     self._format_pvalue_value(pv),
