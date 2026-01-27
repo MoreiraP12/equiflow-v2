@@ -2967,24 +2967,14 @@ class EasyFlow:
             nonnormal=self._nonnormal_vars,
         )
         
-        # Add exclusion steps
-        df = self._data.copy()
+        # Add exclusion steps using stored filtered DataFrames directly
+        # This avoids index alignment issues that occur when recomputing masks
         for i, step in enumerate(self._exclusion_steps):
-            if callable(step["condition"]):
-                mask = step["condition"](df)
-            elif isinstance(step["condition"], pd.Series):
-                mask = pd.Series(False, index=df.index)
-                common_idx = df.index.intersection(step["condition"].index)
-                mask.loc[common_idx] = step["condition"].loc[common_idx]
-            else:
-                mask = step["condition"]
-            
             ef.add_exclusion(
-                keep=mask,
+                new_cohort=step["new_data"],
                 exclusion_reason=step["label"],
                 new_cohort_label=f"Step {i + 1}",
             )
-            df = df[mask]
         
         self._equiflow = ef
         
