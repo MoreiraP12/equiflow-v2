@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed docs/conf.py pointing to wrong repository (ehrmonize → equiflow)
 - Fixed test files using deprecated `mask=` parameter
 
-## [0.1.7] - 2024-12-XX
+## [0.1.7]
 
 ### Added
 - `TablePValues` class for statistical significance testing
@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Numerical stability in SMD calculations for edge cases
 - Handling of variables with all missing values
 
-## [0.1.1] - 2024-07-13
+## [0.1.1]
 
 ### Added
 - Initial public release
@@ -54,7 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Custom variable ordering and category limiting
 - Flexible formatting options
 
-## [0.1.0a2] - 2024-05-30
+## [0.1.0a2]
 
 ### Added
 - Alpha release for testing
