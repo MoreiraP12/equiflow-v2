@@ -2,10 +2,10 @@
 
 project = 'equiflow'
 copyright = '2024, João Matos'
-author = 'João Matos'
+author = 'João Matos, Pedro Moreira, Jacob Ellen'
 
-release = '0.1'
-version = '0.1.0a4'
+release = '0.1.7'
+version = '0.1.7'
 
 # -- General configuration
 
@@ -41,7 +41,7 @@ html_theme_options = {
     "icon_links": [
         {
             "name": "GitHub",
-            "url": "https://github.com/aiwonglab/ehrmonize",
+            "url": "https://github.com/joamats/equiflow",
             "icon": "fa-brands fa-square-github",
             "type": "fontawesome",
         },
@@ -55,8 +55,8 @@ html_theme_options = {
 }
 
 html_context = {
-    "github_user": "aiwonglab",
-    "github_repo": "ehrmonize",
+    "github_user": "joamats",
+    "github_repo": "equiflow",
     "github_version": "main",
     "doc_path": "docs",
 }
