@@ -1,6 +1,11 @@
 # equiflow
 
-*equiflow* is a Python package for generating **Equity-focused Cohort Selection Flow Diagrams**. It facilitates transparent, reproducible documentation of cohort curation in clinical and machine learning research, helping researchers identify and quantify potential selection bias.
+[![Tests](https://github.com/MoreiraP12/equiflow-v2/actions/workflows/test.yml/badge.svg)](https://github.com/MoreiraP12/equiflow-v2/actions/workflows/test.yml)
+[![PyPI version](https://badge.fury.io/py/equiflow.svg)](https://badge.fury.io/py/equiflow)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+
+**equiflow** is a Python package for generating Equity-focused Cohort Selection Flow Diagrams. It facilitates transparent, reproducible documentation of cohort curation in clinical and machine learning research, helping researchers identify and quantify potential selection bias.
 
 ## Features
 
@@ -16,7 +21,22 @@
 pip install equiflow
 ```
 
-### Dependencies
+### System Dependencies
+
+For flow diagram generation, you need Graphviz installed:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install graphviz
+
+# macOS
+brew install graphviz
+
+# Windows
+choco install graphviz
+```
+
+### Python Dependencies
 
 - pandas
 - numpy
@@ -144,20 +164,23 @@ The `view_table_pvalues()` method supports:
 - **Non-normal continuous**: Kruskal-Wallis test
 - **Missingness**: Two-proportion z-test
 
-Multiple testing correction options:
-- `"none"`: No correction (default)
-- `"bonferroni"`: Bonferroni correction (controls FWER)
-- `"fdr_bh"`: Benjamini-Hochberg procedure (controls FDR)
+**Multiple testing correction options:**
+
+| Option | Description |
+|--------|-------------|
+| `"none"` | No correction (default) |
+| `"bonferroni"` | Bonferroni correction (controls FWER) |
+| `"fdr_bh"` | Benjamini-Hochberg procedure (controls FDR) |
 
 ## Benefits for Research Equity
 
 EquiFlow helps researchers:
 
-- Make cohort selection decisions transparent and reproducible
-- Identify when exclusion criteria disproportionately affect certain groups
-- Quantify demographic drift at each selection step
-- Document cohort curation in a standardized format
-- Comply with equity-focused reporting guidelines
+- Make cohort selection decisions **transparent** and **reproducible**
+- Identify when exclusion criteria **disproportionately affect** certain groups
+- **Quantify demographic drift** at each selection step
+- Document cohort curation in a **standardized format**
+- Comply with **equity-focused reporting guidelines**
 
 ## Motivation
 
@@ -169,13 +192,35 @@ Building on the "Data Cards" initiative for transparency in AI research, we advo
 
 If you use EquiFlow in your research, please cite our position paper:
 
-> Ellen JG, Matos J, Viola M, et al. Participant flow diagrams for health equity in AI. *J Biomed Inform*. 2024;152:104631. [https://doi.org/10.1016/j.jbi.2024.104631](https://doi.org/10.1016/j.jbi.2024.104631)
+> Ellen JG, Matos J, Viola M, et al. Participant flow diagrams for health equity in AI. *J Biomed Inform*. 2024;152:104631. https://doi.org/10.1016/j.jbi.2024.104631
 
+```bibtex
+@article{ellen2024participant,
+  title={Participant flow diagrams for health equity in AI},
+  author={Ellen, Jacob G and Matos, Jo{\~a}o and Viola, Matteo and others},
+  journal={Journal of Biomedical Informatics},
+  volume={152},
+  pages={104631},
+  year={2024},
+  publisher={Elsevier},
+  doi={10.1016/j.jbi.2024.104631}
+}
+```
 
 ## License
 
-[License information]
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Contributing
 
-[Contributing guidelines]
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to:
+
+- Set up a development environment
+- Run tests
+- Submit pull requests
+- Report issues
+
+## Related Tools
+
+- [tableone](https://github.com/tompollard/tableone) - Summary statistics for patient populations
+- [aequitas](https://github.com/dssg/aequitas) - Bias and fairness audit toolkit
