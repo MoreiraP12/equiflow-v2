@@ -67,12 +67,6 @@ full = [
     "pygraphviz",
 ]
 
-[project.urls]
-Homepage = "https://github.com/joamats/equiflow"
-Documentation = "https://equiflow.readthedocs.io"
-Repository = "https://github.com/joamats/equiflow"
-Issues = "https://github.com/joamats/equiflow/issues"
-
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["equiflow*"]
