@@ -56,8 +56,8 @@ def generate_synthetic_eicu_data(n: int = 5000, seed: int = 42) -> pd.DataFrame:
     
     # Troponin with missing values (~15% missing)
     troponin = np.random.lognormal(0, 1, n)
-    troponin_mask = np.random.random(n) < 0.15
-    troponin = np.where(troponin_mask, np.nan, troponin)
+    troponin_keep = np.random.random(n) < 0.15
+    troponin = np.where(troponin_keep, np.nan, troponin)
     
     # Clinical flags
     non_cardiac_patient = np.random.random(n) < 0.70  # 70% non-cardiac
