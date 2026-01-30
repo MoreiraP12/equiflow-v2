@@ -283,7 +283,7 @@ class EquiFlow:
         order_vars: Optional[List[str]] = None,
         order_classes: Optional[Dict[str, List[str]]] = None,
         limit: Optional[Union[int, Dict[str, int]]] = None,
-        decimals: int = 2,
+        decimals: int = 1,
         smd_decimals: Optional[int] = None,
         format_cat: str = "N (%)",
         format_normal: str = "Mean ± SD",
