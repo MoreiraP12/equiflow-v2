@@ -33,7 +33,7 @@ Example
 
 For more information, see:
 - Documentation: https://equiflow.readthedocs.io
-- GitHub: https://github.com/joamats/equiflow
+- GitHub: https://github.com/MoreiraP12/equiflow-v2
 - Paper: https://doi.org/10.1016/j.jbi.2024.104631
 """
 
