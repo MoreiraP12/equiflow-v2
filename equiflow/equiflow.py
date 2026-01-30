@@ -224,7 +224,7 @@ class EquiFlow:
     limit : int or dict, optional
         Maximum number of categories to display. If int, applies to all
         categorical variables. If dict, maps variable names to limits.
-    decimals : int, default=2
+    decimals : int, default=1
         Number of decimal places for statistics.
     smd_decimals : int, optional
         Number of decimal places for SMD values. Defaults to `decimals`.
@@ -1029,7 +1029,7 @@ class TableCharacteristics:
         Dictionary mapping variable names to category order lists.
     limit : int or dict, optional
         Maximum categories to display per variable.
-    decimals : int, default=2
+    decimals : int, default=1
         Number of decimal places.
     format_cat : str, default="N (%)"
         Format for categorical variables.
@@ -1056,7 +1056,7 @@ class TableCharacteristics:
         order_vars: Optional[List[str]] = None,
         order_classes: Optional[Dict[str, List[str]]] = None,
         limit: Optional[Union[int, Dict[str, int]]] = None,
-        decimals: int = 2,
+        decimals: int = 1,
         format_cat: str = "N (%)",
         format_normal: str = "Mean ± SD",
         format_nonnormal: str = "Median [IQR]",
@@ -2787,8 +2787,8 @@ class EasyFlow:
     ...     .categorize(['sex', 'race'])
     ...     .measure_normal(['age'])
     ...     .measure_nonnormal(['income'])
-    ...     .exclude(df['age'] >= 18, "Age < 18")
-    ...     .exclude(df['missing_data'] <= 0.5, "Too much missing data")
+    ...     .exclude(df['age'] >= 18, "Age < 18", "Adult cohort")
+    ...     .exclude(df['missing_data'] <= 0.5, "Too much missing data", "Complete data")
     ...     .generate(output="my_flow", show=True)
     ... )
     """
@@ -2904,7 +2904,8 @@ class EasyFlow:
     def exclude(
         self,
         condition: Union[pd.Series, Callable[[pd.DataFrame], pd.Series]],
-        label: Optional[str] = None
+        label: Optional[str] = None,
+        cohort_label: Optional[str] = None
     ) -> 'EasyFlow':
         """
         Add an exclusion step.
@@ -2919,6 +2920,8 @@ class EasyFlow:
             or a function that takes a DataFrame and returns such a mask.
         label : str, optional
             Label for this exclusion step (describes what was excluded).
+        cohort_label : str, optional
+            Label for the resulting cohort after this exclusion.
             
         Returns
         -------
@@ -2928,10 +2931,10 @@ class EasyFlow:
         Examples
         --------
         >>> # Keep patients 18 and older (exclude those under 18)
-        >>> flow.exclude(df['age'] >= 18, "Age < 18")
+        >>> flow.exclude(df['age'] >= 18, "Age < 18", "Adult cohort")
         >>> 
-        >>> # Keep using a function
-        >>> flow.exclude(lambda d: d['score'] >= 50, "Low score")
+        >>> # Keep using a function with custom cohort label
+        >>> flow.exclude(lambda d: d['score'] >= 50, "Low score", "High performers")
         """
         label = label or f"Exclusion {len(self._exclusion_steps) + 1}"
         
@@ -2959,6 +2962,7 @@ class EasyFlow:
             "condition": condition,
             "new_data": new_data.copy(),
             "label": label,
+            "cohort_label": cohort_label,
         })
         self._current_data = new_data
         
@@ -2968,7 +2972,6 @@ class EasyFlow:
         self,
         output: str = "flow_diagram",
         show: bool = True,
-        format: str = "pdf",
         pvalues: bool = False,
         pvalue_decimals: int = 3,
         pvalue_correction: str = "none",
@@ -2982,8 +2985,6 @@ class EasyFlow:
             Base name for output files.
         show : bool, default=True
             Whether to display the diagram.
-        format : str, default="pdf"
-            Output format.
         pvalues : bool, default=False
             Whether to show p-values.
         pvalue_decimals : int, default=3
@@ -3013,10 +3014,12 @@ class EasyFlow:
         # Add exclusion steps using stored filtered DataFrames directly
         # This avoids index alignment issues that occur when recomputing masks
         for i, step in enumerate(self._exclusion_steps):
+            # Use custom cohort_label if provided, otherwise fall back to default
+            cohort_label = step.get("cohort_label") or f"Step {i + 1}"
             ef.add_exclusion(
                 new_cohort=step["new_data"],
                 exclusion_reason=step["label"],
-                new_cohort_label=f"Step {i + 1}",
+                new_cohort_label=cohort_label,
             )
         
         self._equiflow = ef
