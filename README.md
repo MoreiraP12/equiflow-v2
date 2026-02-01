@@ -49,7 +49,7 @@ choco install graphviz
 ### Using EquiFlow (Full Control)
 
 ```python
-from equiflow import EquiFlow
+from equiflow import *
 import pandas as pd
 
 # Initialize with your dataset
@@ -91,7 +91,7 @@ flow.plot_flows(
 ### Using EasyFlow (Streamlined API)
 
 ```python
-from equiflow import EasyFlow
+from equiflow import *
 
 # Chainable API for quick analysis
 flow = (
