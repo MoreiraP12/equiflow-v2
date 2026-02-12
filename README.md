@@ -8,7 +8,7 @@ MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.or
 [![Python
 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 
-**equiflow** is a Python package for generating equity-focused cohort
+**Equiflow** is a Python package for generating equity-focused cohort
 selection flow diagrams. It facilitates transparent, reproducible
 documentation of cohort curation in clinical and machine learning
 research, helping investigators quantify and visualize demographic drift
