@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.8 and 0.1.9] - 2025-01-30
+
+
+## [0.1.8, 0.1.9 and 0.1.10] - 2025-01-30
 
 ### Added
 - Comprehensive pytest test suite with unit and integration tests
